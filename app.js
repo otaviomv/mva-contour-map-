@@ -1,3261 +1,2648 @@
-/* =========================================================
-   MVA GEO - CONTOUR MAP
-   APP.JS
-   Motor principal
-   ========================================================= */
-
 "use strict";
 
 /* =========================================================
-   FUNÇÃO AUXILIAR
+   MVA GEO — CONTOUR MAP
+   APP.JS — versão completa
    ========================================================= */
+
+/* ---------------------------------------------------------
+   ATALHO PARA ELEMENTOS
+--------------------------------------------------------- */
 
 const $ = (id) => document.getElementById(id);
 
+
+/* ---------------------------------------------------------
+   ESTADO DO APLICATIVO
+--------------------------------------------------------- */
+
 const state = {
-    map: null,
+  map: null,
 
-    baseLayers: {},
+  baseLayers: {
+    satellite: null,
+    streets: null
+  },
 
-    drawing: false,
-    closed: false,
+  drawing: false,
+  closed: false,
 
-    points: [],
-    markers: [],
+  points: [],
+  markers: [],
 
-    polygon: null,
+  polygon: null,
 
-    contourLayers: [],
+  contourLayers: [],
+  contourData: [],
 
-    contourData: [],
+  undoStack: [],
 
-    undoStack: [],
+  dem: null,
 
-    dem: null,
+  processing: false
+};
 
-    processing: false
+
+/* ---------------------------------------------------------
+   CONFIGURAÇÃO DO DEM
+--------------------------------------------------------- */
+
+const DEM_CONFIG = {
+  url: "https://api.open-meteo.com/v1/elevation",
+
+  batchSize: 100,
+
+  maxGridColumns: 80,
+
+  maxGridRows: 80,
+
+  targetSpacingMeters: 60
 };
 
 
 /* =========================================================
-   INICIALIZAÇÃO DO MAPA
-   ========================================================= */
+   MAPA
+========================================================= */
 
-state.map = L.map("map", {
+function initMap() {
+
+  state.map = L.map("map", {
+    center: [-29.6500, -50.7800],
+    zoom: 13,
     zoomControl: true,
-    preferCanvas: true
-}).setView(
-    [-29.6500, -50.7800],
-    13
-);
+    preferCanvas: true,
+    doubleClickZoom: false
+  });
 
 
-/* =========================================================
-   CAMADA SATÉLITE
-   ========================================================= */
+  /* SATÉLITE */
 
-const satellite = L.tileLayer(
-    "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+  state.baseLayers.satellite = L.tileLayer(
+    "https://server.arcgisonline.com/ArcGIS/rest/services/" +
+    "World_Imagery/MapServer/tile/{z}/{y}/{x}",
     {
-        maxZoom: 19,
-        attribution: "© Esri"
+      maxZoom: 19,
+      maxNativeZoom: 19,
+      attribution: "Tiles © Esri"
     }
-);
+  );
 
 
-/* =========================================================
-   CAMADA MAPA
-   ========================================================= */
+  /* MAPA */
 
-const streets = L.tileLayer(
+  state.baseLayers.streets = L.tileLayer(
     "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
     {
-        maxZoom: 19,
-        attribution: "© OpenStreetMap contributors"
+      maxZoom: 19,
+      attribution: "© OpenStreetMap contributors"
     }
-);
+  );
 
 
-/* =========================================================
-   SATÉLITE COMO PADRÃO
-   ========================================================= */
-
-satellite.addTo(state.map);
+  state.baseLayers.satellite.addTo(state.map);
 
 
-/* =========================================================
-   CONTROLE DE CAMADAS
-   ========================================================= */
-
-state.baseLayers = {
-    "Satélite": satellite,
-    "Mapa": streets
-};
-
-L.control.layers(
-    state.baseLayers,
+  L.control.layers(
+    {
+      "🛰️ Satélite": state.baseLayers.satellite,
+      "🗺️ Mapa": state.baseLayers.streets
+    },
     null,
     {
-        collapsed: true
+      collapsed: true
     }
-).addTo(state.map);
+  ).addTo(state.map);
 
 
-/* =========================================================
-   STATUS
-   ========================================================= */
+  /* CLIQUE PARA DESENHAR */
 
-function status(text) {
+  state.map.on("click", (event) => {
 
-    const element = $("status");
+    if (!state.drawing) return;
+    if (state.closed) return;
 
-    if (element) {
-        element.textContent = text;
-    }
+    addPoint(event.latlng);
 
-}
+  });
 
 
-/* =========================================================
-   TOAST
-   ========================================================= */
+  /* DUPLO CLIQUE APÓS FECHAR */
 
-function toast(text) {
+  state.map.on("dblclick", (event) => {
 
-    const element = $("toast");
+    if (!state.closed) return;
 
-    if (!element) {
-        alert(text);
-        return;
-    }
-
-    element.textContent = text;
-
-    element.classList.add("show");
-
-    clearTimeout(
-        toast.timer
+    insertVertexAtClosestEdge(
+      event.latlng
     );
 
-    toast.timer = setTimeout(
-        () => {
-            element.classList.remove("show");
-        },
-        3000
-    );
+  });
+
+
+  setTimeout(() => {
+    state.map.invalidateSize();
+  }, 300);
 
 }
 
 
 /* =========================================================
-   LOADING
-   ========================================================= */
+   UTILIDADES
+========================================================= */
 
-function loading(
-    visible,
-    title = "Processando...",
-    message = "Aguarde."
-) {
+function status(message) {
 
-    const element =
-        $("loading");
+  const element = $("status");
 
-    if (!element) {
-        return;
+  if (element) {
+    element.textContent = message;
+  }
+
+}
+
+
+function toast(message) {
+
+  const old = document.querySelector(
+    ".mva-toast"
+  );
+
+  if (old) old.remove();
+
+
+  const element =
+    document.createElement("div");
+
+  element.className = "mva-toast";
+
+  element.textContent = message;
+
+  document.body.appendChild(element);
+
+
+  setTimeout(() => {
+
+    element.remove();
+
+  }, 3000);
+
+}
+
+
+function loading(show, message) {
+
+  const element = $("loading");
+
+  const text = $("loadingText");
+
+  if (!element) return;
+
+
+  if (text) {
+    text.textContent =
+      message || "Processando...";
+  }
+
+
+  element.classList.toggle(
+    "hidden",
+    !show
+  );
+
+}
+
+
+function numberBR(value, decimals = 2) {
+
+  if (
+    value === null ||
+    value === undefined ||
+    !Number.isFinite(Number(value))
+  ) {
+    return "—";
+  }
+
+
+  return Number(value).toLocaleString(
+    "pt-BR",
+    {
+      minimumFractionDigits: decimals,
+      maximumFractionDigits: decimals
     }
+  );
 
-    if (visible) {
+}
 
-        element.classList.remove(
-            "hidden"
-        );
 
-        $("loadingTitle").textContent =
-            title;
+function distanceMeters(a, b) {
 
-        $("loadingText").textContent =
-            message;
+  const R = 6371000;
 
-    } else {
+  const lat1 =
+    a.lat * Math.PI / 180;
 
-        element.classList.add(
-            "hidden"
-        );
+  const lat2 =
+    b.lat * Math.PI / 180;
 
-    }
+  const dLat =
+    (b.lat - a.lat) *
+    Math.PI / 180;
+
+  const dLng =
+    (b.lng - a.lng) *
+    Math.PI / 180;
+
+  const h =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1) *
+    Math.cos(lat2) *
+    Math.sin(dLng / 2) ** 2;
+
+  return (
+    2 *
+    R *
+    Math.atan2(
+      Math.sqrt(h),
+      Math.sqrt(1 - h)
+    )
+  );
 
 }
 
 
 /* =========================================================
-   FORMATAÇÃO
-   ========================================================= */
+   ÁREA
+========================================================= */
 
-function numberBR(
-    value,
-    decimals = 2
-) {
+function polygonAreaM2(points) {
 
-    return Number(value)
-        .toLocaleString(
-            "pt-BR",
-            {
-                minimumFractionDigits:
-                    decimals,
+  if (!points || points.length < 3) {
+    return 0;
+  }
 
-                maximumFractionDigits:
-                    decimals
-            }
-        );
 
-}
+  const lat0 =
+    points.reduce(
+      (sum, p) => sum + p.lat,
+      0
+    ) / points.length;
 
 
-/* =========================================================
-   ÍCONE DO VÉRTICE
-   ========================================================= */
+  const R = 6378137;
 
-function vertexIcon(
-    first = false
-) {
+  const latFactor =
+    Math.PI / 180 * R;
 
-    return L.divIcon({
-
-        className: "",
-
-        html:
-            `<div class="vertex ${
-                first ? "done" : ""
-            }"></div>`,
-
-        iconSize: [
-            18,
-            18
-        ],
-
-        iconAnchor: [
-            9,
-            9
-        ]
-
-    });
-
-}
-
-
-/* =========================================================
-   SALVAR ESTADO PARA DESFAZER
-   ========================================================= */
-
-function saveUndo() {
-
-    state.undoStack.push(
-
-        state.points.map(
-            p => ({
-                lat: p.lat,
-                lng: p.lng
-            })
-        )
-
-    );
-
-
-    if (
-        state.undoStack.length >
-        100
-    ) {
-
-        state.undoStack.shift();
-
-    }
-
-}
-
-
-/* =========================================================
-   CALCULAR ÁREA
-   ========================================================= */
-
-function polygonArea(
-    points
-) {
-
-    if (
-        points.length < 3
-    ) {
-        return 0;
-    }
-
-
-    const meanLat =
-        points.reduce(
-            (sum, p) =>
-                sum + p.lat,
-            0
-        ) /
-        points.length;
-
-
-    const R =
-        6378137;
-
-
-    const cosLat =
-        Math.cos(
-            meanLat *
-            Math.PI /
-            180
-        );
-
-
-    const xy =
-        points.map(
-            p => ({
-
-                x:
-                    p.lng *
-                    Math.PI /
-                    180 *
-                    R *
-                    cosLat,
-
-                y:
-                    p.lat *
-                    Math.PI /
-                    180 *
-                    R
-
-            })
-        );
-
-
-    let area = 0;
-
-
-    for (
-        let i = 0;
-        i < xy.length;
-        i++
-    ) {
-
-        const j =
-            (
-                i + 1
-            ) %
-            xy.length;
-
-
-        area +=
-            xy[i].x *
-            xy[j].y -
-            xy[j].x *
-            xy[i].y;
-
-    }
-
-
-    return Math.abs(
-        area
-    ) / 2;
-
-}
-
-
-/* =========================================================
-   ATUALIZAR ESTATÍSTICAS
-   ========================================================= */
-
-function updateStats() {
-
-    if ($("vertexCount")) {
-
-        $("vertexCount")
-            .textContent =
-            state.points.length;
-
-    }
-
-
-    const area =
-        polygonArea(
-            state.points
-        );
-
-
-    if ($("areaValue")) {
-
-        $("areaValue")
-            .textContent =
-            `${numberBR(
-                area / 10000,
-                2
-            )} ha`;
-
-    }
-
-}
-
-
-/* =========================================================
-   REMOVER MARCADORES
-   ========================================================= */
-
-function removeMarkers() {
-
-    state.markers.forEach(
-        marker => {
-
-            state.map.removeLayer(
-                marker
-            );
-
-        }
+  const lngFactor =
+    Math.PI / 180 *
+    R *
+    Math.cos(
+      lat0 * Math.PI / 180
     );
 
 
-    state.markers = [];
+  let area = 0;
+
+
+  for (
+    let i = 0;
+    i < points.length;
+    i++
+  ) {
+
+    const j =
+      (i + 1) %
+      points.length;
+
+
+    const x1 =
+      points[i].lng *
+      lngFactor;
+
+    const y1 =
+      points[i].lat *
+      latFactor;
+
+    const x2 =
+      points[j].lng *
+      lngFactor;
+
+    const y2 =
+      points[j].lat *
+      latFactor;
+
+
+    area +=
+      x1 * y2 -
+      x2 * y1;
+
+  }
+
+
+  return Math.abs(area / 2);
 
 }
 
 
-/* =========================================================
-   DESENHAR VÉRTICES
-   ========================================================= */
+function getBBox(points) {
 
-function renderMarkers() {
+  const lats =
+    points.map(
+      p => p.lat
+    );
 
-    removeMarkers();
-
-
-    state.points.forEach(
-        (point, index) => {
-
-            const marker =
-                L.marker(
-                    point,
-                    {
-                        draggable: true,
-
-                        icon:
-                            vertexIcon(
-                                index === 0
-                            )
-                    }
-                )
-                .addTo(
-                    state.map
-                );
-
-
-            marker.on(
-                "drag",
-                () => {
-
-                    state.points[index] =
-                        marker.getLatLng();
-
-                    drawPolygon();
-
-                    updateStats();
-
-                }
-            );
-
-
-            marker.on(
-                "dragend",
-                () => {
-
-                    saveUndo();
-
-                    status(
-                        `Vértice ${
-                            index + 1
-                        } reposicionado.`
-                    );
-
-                }
-            );
-
-
-            state.markers.push(
-                marker
-            );
-
-        }
+  const lngs =
+    points.map(
+      p => p.lng
     );
 
 
-    drawPolygon();
-
-    updateStats();
-
-}
-
-
-/* =========================================================
-   DESENHAR POLÍGONO
-   ========================================================= */
-
-function drawPolygon() {
-
-    if (
-        state.polygon
-    ) {
-
-        state.map.removeLayer(
-            state.polygon
-        );
-
-        state.polygon = null;
-
-    }
-
-
-    if (
-        state.points.length < 2
-    ) {
-
-        return;
-
-    }
-
-
-    state.polygon =
-        L.polygon(
-            state.points,
-            {
-                color: "#176b45",
-
-                weight: 2,
-
-                dashArray:
-                    state.closed
-                        ? null
-                        : "7 5",
-
-                fillColor:
-                    "#176b45",
-
-                fillOpacity:
-                    0.08
-            }
-        )
-        .addTo(
-            state.map
-        );
-
-}
-
-
-/* =========================================================
-   NOVA ÁREA
-   ========================================================= */
-
-function newArea() {
-
-    clearContours();
-
-
-    removeMarkers();
-
-
-    if (
-        state.polygon
-    ) {
-
-        state.map.removeLayer(
-            state.polygon
-        );
-
-        state.polygon = null;
-
-    }
-
-
-    state.points = [];
-
-    state.undoStack = [];
-
-    state.drawing = true;
-
-    state.closed = false;
-
-
-    state.map
-        .getContainer()
-        .classList.add(
-            "drawing-mode"
-        );
-
-
-    updateStats();
-
-
-    status(
-        "Área aberta. Toque no mapa para adicionar os vértices."
-    );
-
-
-    toast(
-        "Marque quantos pontos quiser."
-    );
-
-}
-
-
-/* =========================================================
-   ADICIONAR PONTO
-   ========================================================= */
-
-function addPoint(
-    event
-) {
-
-    if (
-        !state.drawing
-    ) {
-
-        return;
-
-    }
-
-
-    saveUndo();
-
-
-    state.points.push(
-        event.latlng
-    );
-
-
-    renderMarkers();
-
-
-    status(
-        `${state.points.length} vértice${
-            state.points.length === 1
-                ? ""
-                : "s"
-        } marcado${
-            state.points.length === 1
-                ? ""
-                : "s"
-        }.`
-    );
-
-}
-
-
-/* =========================================================
-   DESFAZER
-   ========================================================= */
-
-function undo() {
-
-    if (
-        state.undoStack.length === 0
-    ) {
-
-        toast(
-            "Nada para desfazer."
-        );
-
-        return;
-
-    }
-
-
-    state.points =
-        state.undoStack
-            .pop()
-            .map(
-                p =>
-                    L.latLng(
-                        p.lat,
-                        p.lng
-                    )
-            );
-
-
-    renderMarkers();
-
-
-    status(
-        "Última alteração desfeita."
-    );
-
-}
-
-
-/* =========================================================
-   FECHAR ÁREA
-   ========================================================= */
-
-function closeArea() {
-
-    if (
-        state.points.length < 3
-    ) {
-
-        toast(
-            "É necessário marcar pelo menos 3 vértices."
-        );
-
-        return;
-
-    }
-
-
-    state.drawing = false;
-
-    state.closed = true;
-
-
-    state.map
-        .getContainer()
-        .classList.remove(
-            "drawing-mode"
-        );
-
-
-    drawPolygon();
-
-
-    status(
-        "Área fechada. Confira o limite e gere as curvas."
-    );
-
-}
-
-
-/* =========================================================
-   LIMPAR CURVAS
-   ========================================================= */
-
-function clearContours() {
-
-    state.contourLayers
-        .forEach(
-            layer => {
-
-                state.map.removeLayer(
-                    layer
-                );
-
-            }
-        );
-
-
-    state.contourLayers = [];
-
-    state.contourData = [];
-
-
-    state.dem = null;
-
-
-    if ($("minZ")) {
-
-        $("minZ")
-            .textContent = "—";
-
-    }
-
-
-    if ($("maxZ")) {
-
-        $("maxZ")
-            .textContent = "—";
-
-    }
-
-
-    if ($("sourceInfo")) {
-
-        $("sourceInfo")
-            .textContent =
-            "DEM: —";
-
-    }
-
-}
-
-
-/* =========================================================
-   LIMPAR TUDO
-   ========================================================= */
-
-function clearAll() {
-
-    clearContours();
-
-    removeMarkers();
-
-
-    if (
-        state.polygon
-    ) {
-
-        state.map.removeLayer(
-            state.polygon
-        );
-
-    }
-
-
-    state.polygon = null;
-
-    state.points = [];
-
-    state.undoStack = [];
-
-    state.drawing = false;
-
-    state.closed = false;
-
-
-    state.map
-        .getContainer()
-        .classList.remove(
-            "drawing-mode"
-        );
-
-
-    updateStats();
-
-
-    status(
-        'Pronto. Toque em "Nova área" para começar.'
-    );
-
-}
-
-
-/* =========================================================
-   BOUNDING BOX
-   ========================================================= */
-
-function getBBox() {
-
-    const latitudes =
-        state.points.map(
-            p => p.lat
-        );
-
-
-    const longitudes =
-        state.points.map(
-            p => p.lng
-        );
-
-
-    return {
-
-        south:
-            Math.min(
-                ...latitudes
-            ),
-
-        north:
-            Math.max(
-                ...latitudes
-            ),
-
-        west:
-            Math.min(
-                ...longitudes
-            ),
-
-        east:
-            Math.max(
-                ...longitudes
-            )
-
-    };
+  return {
+    minLat: Math.min(...lats),
+    maxLat: Math.max(...lats),
+    minLng: Math.min(...lngs),
+    maxLng: Math.max(...lngs)
+  };
 
 }
 
 
 /* =========================================================
    PONTO DENTRO DO POLÍGONO
-   ========================================================= */
+========================================================= */
 
-function pointInPolygon(
-    point,
-    polygon
-) {
+function pointInPolygon(point, polygon) {
 
-    let inside = false;
+  let inside = false;
 
-
-    for (
-        let i = 0,
-        j = polygon.length - 1;
-
-        i < polygon.length;
-
-        j = i++
-    ) {
-
-        const xi =
-            polygon[i].x;
-
-        const yi =
-            polygon[i].y;
-
-        const xj =
-            polygon[j].x;
-
-        const yj =
-            polygon[j].y;
+  const x = point.lng;
+  const y = point.lat;
 
 
-        const intersect =
-            (
-                (yi > point.y) !==
-                (yj > point.y)
-            ) &&
-            (
-                point.x <
-                (
-                    (xj - xi) *
-                    (point.y - yi)
-                ) /
-                (yj - yi) +
-                xi
-            );
+  for (
+    let i = 0, j = polygon.length - 1;
+    i < polygon.length;
+    j = i++
+  ) {
+
+    const xi = polygon[i].lng;
+    const yi = polygon[i].lat;
+
+    const xj = polygon[j].lng;
+    const yj = polygon[j].lat;
 
 
-        if (intersect) {
+    const intersects =
+      (
+        yi > y
+      ) !==
+      (
+        yj > y
+      ) &&
+      x <
+      (
+        (xj - xi) *
+        (y - yi) /
+        (yj - yi) +
+        xi
+      );
 
-            inside = !inside;
 
-        }
+    if (intersects) {
+      inside = !inside;
+    }
+
+  }
+
+
+  return inside;
+
+}
+
+
+/* =========================================================
+   ESTATÍSTICAS
+========================================================= */
+
+function updateStats() {
+
+  if ($("vertexCount")) {
+
+    $("vertexCount").textContent =
+      state.points.length;
+
+  }
+
+
+  const areaHa =
+    polygonAreaM2(
+      state.points
+    ) / 10000;
+
+
+  if ($("areaValue")) {
+
+    $("areaValue").textContent =
+      `${numberBR(areaHa, 2)} ha`;
+
+  }
+
+
+  if (
+    state.dem &&
+    state.dem.elevations
+  ) {
+
+    const valid =
+      state.dem.elevations.filter(
+        Number.isFinite
+      );
+
+
+    if (valid.length) {
+
+      const min =
+        Math.min(...valid);
+
+      const max =
+        Math.max(...valid);
+
+
+      if ($("minElevation")) {
+
+        $("minElevation").textContent =
+          `${numberBR(min, 1)} m`;
+
+      }
+
+
+      if ($("maxElevation")) {
+
+        $("maxElevation").textContent =
+          `${numberBR(max, 1)} m`;
+
+      }
 
     }
 
+  } else {
 
-    return inside;
-
-}
-
-
-/* =========================================================
-   DISTÂNCIA APROXIMADA ENTRE DOIS PONTOS
-   ========================================================= */
-
-function distanceMeters(
-    a,
-    b
-) {
-
-    const R = 6378137;
-
-
-    const lat1 =
-        a.lat *
-        Math.PI /
-        180;
-
-    const lat2 =
-        b.lat *
-        Math.PI /
-        180;
-
-
-    const dLat =
-        (
-            b.lat -
-            a.lat
-        ) *
-        Math.PI /
-        180;
-
-
-    const dLng =
-        (
-            b.lng -
-            a.lng
-        ) *
-        Math.PI /
-        180;
-
-
-    const x =
-        dLng *
-        Math.cos(
-            (
-                lat1 +
-                lat2
-            ) / 2
-        );
-
-
-    const y =
-        dLat;
-
-
-    return (
-        Math.sqrt(
-            x * x +
-            y * y
-        ) *
-        R
-    );
-
-}
-
-
-/* =========================================================
-   LIMITE DA ÁREA
-   ========================================================= */
-
-function bboxSize(
-    bbox
-) {
-
-    const northSouth =
-        distanceMeters(
-            {
-                lat:
-                    bbox.south,
-                lng:
-                    bbox.west
-            },
-            {
-                lat:
-                    bbox.north,
-                lng:
-                    bbox.west
-            }
-        );
-
-
-    const eastWest =
-        distanceMeters(
-            {
-                lat:
-                    (
-                        bbox.south +
-                        bbox.north
-                    ) / 2,
-                lng:
-                    bbox.west
-            },
-            {
-                lat:
-                    (
-                        bbox.south +
-                        bbox.north
-                    ) / 2,
-                lng:
-                    bbox.east
-            }
-        );
-
-
-    return {
-
-        width:
-            eastWest,
-
-        height:
-            northSouth
-
-    };
-
-}
-
-
-/* =========================================================
-   API BASE
-   ========================================================= */
-
-function apiBase() {
-
-    const input =
-        $("apiBase");
-
-
-    if (!input) {
-
-        throw new Error(
-            "Campo da API não encontrado."
-        );
-
+    if ($("minElevation")) {
+      $("minElevation").textContent = "—";
     }
 
-
-    const value =
-        input.value.trim();
-
-
-    if (!value) {
-
-        throw new Error(
-            "Informe a URL da API DEM nas configurações."
-        );
-
+    if ($("maxElevation")) {
+      $("maxElevation").textContent = "—";
     }
 
-
-    return value.replace(
-        /\/+$/,
-        ""
-    );
+  }
 
 }
 
 
 /* =========================================================
-   EVENTOS DOS BOTÕES
-   ========================================================= */
+   ÍCONE DOS VÉRTICES
+========================================================= */
 
-$("newArea")
-    .addEventListener(
-        "click",
-        newArea
-    );
+function vertexIcon(index) {
 
+  return L.divIcon({
+    className: "",
+    html:
+      `<div class="vertex-marker"
+            title="Vértice ${index + 1}">
+       </div>`,
+    iconSize: [22, 22],
+    iconAnchor: [11, 11]
+  });
 
-$("undoBtn")
-    .addEventListener(
-        "click",
-        undo
-    );
-
-
-$("closeBtn")
-    .addEventListener(
-        "click",
-        closeArea
-    );
-
-
-$("clearBtn")
-    .addEventListener(
-        "click",
-        clearAll
-    );
+}
 
 
 /* =========================================================
-   CLIQUE NO MAPA
-   ========================================================= */
+   RENDERIZA MARCADORES
+========================================================= */
 
-state.map.on(
-    "click",
-    addPoint
-);
+function renderMarkers() {
+
+  state.markers.forEach(
+    marker => marker.remove()
+  );
+
+  state.markers = [];
 
 
-/* =========================================================
-   CONFIGURAÇÕES
-   ========================================================= */
+  state.points.forEach(
+    (point, index) => {
 
-$("settingsBtn")
-    .addEventListener(
-        "click",
+      const marker =
+        L.marker(
+          [point.lat, point.lng],
+          {
+            draggable: true,
+            icon: vertexIcon(index),
+            zIndexOffset: 1000
+          }
+        );
+
+
+      marker.on(
+        "dragstart",
         () => {
 
-            $("settings")
-                .classList.toggle(
-                    "open"
-                );
+          state.undoStack.push(
+            clonePoints()
+          );
 
         }
+      );
+
+
+      marker.on(
+        "drag",
+        (event) => {
+
+          const p =
+            event.target.getLatLng();
+
+
+          state.points[index] = {
+            lat: p.lat,
+            lng: p.lng
+          };
+
+
+          redrawPolygon();
+
+          updateStats();
+
+        }
+      );
+
+
+      marker.on(
+        "dragend",
+        () => {
+
+          clearContours();
+
+          state.dem = null;
+
+          status(
+            "Vértice alterado. Gere as curvas novamente."
+          );
+
+        }
+      );
+
+
+      marker.addTo(
+        state.map
+      );
+
+
+      state.markers.push(
+        marker
+      );
+
+    }
+  );
+
+}
+
+
+/* =========================================================
+   CLONAR PONTOS
+========================================================= */
+
+function clonePoints() {
+
+  return state.points.map(
+    p => ({
+      lat: p.lat,
+      lng: p.lng
+    })
+  );
+
+}
+
+
+/* =========================================================
+   POLÍGONO
+========================================================= */
+
+function redrawPolygon() {
+
+  if (state.polygon) {
+
+    state.polygon.remove();
+
+    state.polygon = null;
+
+  }
+
+
+  if (state.points.length < 2) {
+    return;
+  }
+
+
+  const latlngs =
+    state.points.map(
+      p => [
+        p.lat,
+        p.lng
+      ]
     );
 
 
-/* =========================================================
-   TECLA ESC
-   ========================================================= */
+  if (
+    state.closed &&
+    latlngs.length >= 3
+  ) {
 
-document.addEventListener(
-    "keydown",
-    event => {
+    latlngs.push(
+      latlngs[0]
+    );
 
-        if (
-            event.key ===
-            "Escape"
-        ) {
-
-            state.drawing = false;
-
-            state.map
-                .getContainer()
-                .classList.remove(
-                    "drawing-mode"
-                );
-
-        }
+  }
 
 
-        if (
-            (
-                event.ctrlKey ||
-                event.metaKey
-            ) &&
-            event.key.toLowerCase() ===
-            "z"
-        ) {
-
-            event.preventDefault();
-
-            undo();
-
-        }
-
-    }
-);
-
-
-/* =========================================================
-   ESTADO INICIAL
-   ========================================================= */
-
-updateStats();
-
-status(
-    'Pronto. Toque em "Nova área" para começar.'
-);
-
-console.log(
-    "MVA Geo Contour Map iniciado."
-);
-
-/* =========================================================
-   PARTE 2 — DEM + GRADE + CURVAS DE NÍVEL
-   ========================================================= */
-
-
-/* =========================================================
-   CONFIGURAÇÃO DO DEM
-   ========================================================= */
-
-const DEM_CONFIG = {
-
-    /*
-     * Fallback público para testes.
-     *
-     * Importante:
-     * este serviço fornece elevação baseada no
-     * Copernicus GLO-90.
-     *
-     * A arquitetura abaixo já fica preparada para
-     * posteriormente utilizar um DEM regional de
-     * maior resolução através de um Worker/API.
-     */
-
-    openMeteo:
-        "https://api.open-meteo.com/v1/elevation",
-
-    /*
-     * Máximo de coordenadas por requisição.
-     */
-
-    batchSize:
-        100,
-
-    /*
-     * Limites da grade no navegador.
-     *
-     * Isso NÃO limita o número de vértices do
-     * polígono.
-     *
-     * É apenas uma proteção para o celular não
-     * travar durante o cálculo.
-     */
-
-    maxGridColumns:
-        80,
-
-    maxGridRows:
-        80
-
-};
-
-
-/* =========================================================
-   OBTER EQUIPARAMENTO DA CURVA
-   ========================================================= */
-
-function getContourInterval() {
-
-    const element =
-        $("interval");
-
-    if (!element) {
-
-        return 1;
-
-    }
-
-    const value =
-        Number(
-            element.value
-        );
-
-    if (
-        !Number.isFinite(
-            value
-        ) ||
-        value <= 0
-    ) {
-
-        return 1;
-
-    }
-
-    return value;
+  state.polygon =
+    L.polygon(
+      latlngs,
+      {
+        color: "#147a4b",
+        weight: 3,
+        fillColor: "#147a4b",
+        fillOpacity:
+          state.closed
+            ? 0.12
+            : 0.04,
+        className: "area-polygon"
+      }
+    ).addTo(
+      state.map
+    );
 
 }
 
 
 /* =========================================================
-   CRIAR GRADE DE AMOSTRAGEM
-   ========================================================= */
+   NOVA ÁREA
+========================================================= */
 
-function createSamplingGrid(
-    bbox
-) {
+function newArea() {
 
-    const size =
-        bboxSize(
-            bbox
-        );
+  clearContours();
 
+  state.drawing = true;
+  state.closed = false;
 
-    /*
-     * Usamos aproximadamente 100 m entre
-     * pontos como ponto de partida.
-     *
-     * O número é adaptado à área.
-     */
+  state.points = [];
+  state.undoStack = [];
 
-    const targetSpacing =
-        100;
+  state.dem = null;
 
 
-    let columns =
-        Math.ceil(
-            size.width /
-            targetSpacing
-        ) + 1;
+  if (state.polygon) {
+
+    state.polygon.remove();
+
+    state.polygon = null;
+
+  }
 
 
-    let rows =
-        Math.ceil(
-            size.height /
-            targetSpacing
-        ) + 1;
+  renderMarkers();
+  updateStats();
 
 
-    columns =
-        Math.max(
-            8,
-            Math.min(
-                columns,
-                DEM_CONFIG.maxGridColumns
-            )
-        );
+  status(
+    "Toque no mapa para adicionar os vértices."
+  );
 
 
-    rows =
-        Math.max(
-            8,
-            Math.min(
-                rows,
-                DEM_CONFIG.maxGridRows
-            )
-        );
+  toast(
+    "Modo de desenho ativado."
+  );
+
+}
 
 
-    const coordinates = [];
+/* =========================================================
+   ADICIONAR PONTO
+========================================================= */
+
+function addPoint(latlng) {
+
+  if (
+    !state.drawing ||
+    state.closed
+  ) {
+    return;
+  }
+
+
+  if (state.points.length) {
+
+    const last =
+      state.points[
+        state.points.length - 1
+      ];
+
+
+    if (
+      distanceMeters(
+        last,
+        latlng
+      ) < 0.5
+    ) {
+
+      return;
+
+    }
+
+  }
+
+
+  state.undoStack.push(
+    clonePoints()
+  );
+
+
+  state.points.push({
+    lat: latlng.lat,
+    lng: latlng.lng
+  });
+
+
+  renderMarkers();
+
+  redrawPolygon();
+
+  updateStats();
+
+  clearContours();
+
+
+  status(
+    `${state.points.length} vértices adicionados.`
+  );
+
+}
+
+
+/* =========================================================
+   DESFAZER
+========================================================= */
+
+function undo() {
+
+  if (!state.undoStack.length) {
+
+    toast(
+      "Nada para desfazer."
+    );
+
+    return;
+
+  }
+
+
+  state.points =
+    state.undoStack.pop();
+
+
+  state.closed =
+    state.points.length >= 3 &&
+    state.closed;
+
+
+  renderMarkers();
+
+  redrawPolygon();
+
+  clearContours();
+
+  state.dem = null;
+
+  updateStats();
+
+
+  status(
+    "Última alteração desfeita."
+  );
+
+}
+
+
+/* =========================================================
+   FECHAR
+========================================================= */
+
+function closeArea() {
+
+  if (
+    state.points.length < 3
+  ) {
+
+    toast(
+      "Adicione pelo menos 3 vértices."
+    );
+
+    return;
+
+  }
+
+
+  state.closed = true;
+  state.drawing = false;
+
+
+  redrawPolygon();
+
+
+  status(
+    `Área fechada com ${state.points.length} vértices.`
+  );
+
+}
+
+
+/* =========================================================
+   LIMPAR CURVAS
+========================================================= */
+
+function clearContours() {
+
+  state.contourLayers.forEach(
+    layer => {
+
+      if (layer) {
+        layer.remove();
+      }
+
+    }
+  );
+
+
+  state.contourLayers = [];
+  state.contourData = [];
+
+
+  if ($("elevationList")) {
+    $("elevationList").textContent = "—";
+  }
+
+
+  if ($("elevationPanel")) {
+    $("elevationPanel")
+      .classList.remove("active");
+  }
+
+
+  if ($("demSource")) {
+    $("demSource").textContent = "—";
+  }
+
+}
+
+
+/* =========================================================
+   LIMPAR TUDO
+========================================================= */
+
+function clearAll() {
+
+  clearContours();
+
+
+  state.markers.forEach(
+    marker => marker.remove()
+  );
+
+  state.markers = [];
+
+
+  if (state.polygon) {
+
+    state.polygon.remove();
+
+    state.polygon = null;
+
+  }
+
+
+  state.points = [];
+
+  state.undoStack = [];
+
+  state.closed = false;
+
+  state.drawing = false;
+
+  state.dem = null;
+
+
+  updateStats();
+
+
+  status(
+    'Pronto. Toque em "Nova área" para começar.'
+  );
+
+}
+
+
+/* =========================================================
+   TAMANHO DA BBOX
+========================================================= */
+
+function bboxSize(bbox) {
+
+  const centerLat =
+    (
+      bbox.minLat +
+      bbox.maxLat
+    ) / 2;
+
+
+  const width =
+    distanceMeters(
+      {
+        lat: centerLat,
+        lng: bbox.minLng
+      },
+      {
+        lat: centerLat,
+        lng: bbox.maxLng
+      }
+    );
+
+
+  const height =
+    distanceMeters(
+      {
+        lat: bbox.minLat,
+        lng: bbox.minLng
+      },
+      {
+        lat: bbox.maxLat,
+        lng: bbox.minLng
+      }
+    );
+
+
+  return {
+    width,
+    height
+  };
+
+}
+
+
+/* =========================================================
+   GRID DE AMOSTRAGEM
+========================================================= */
+
+function createSamplingGrid(points) {
+
+  const bbox =
+    getBBox(points);
+
+  const size =
+    bboxSize(bbox);
+
+
+  let columns =
+    Math.ceil(
+      size.width /
+      DEM_CONFIG.targetSpacingMeters
+    ) + 1;
+
+
+  let rows =
+    Math.ceil(
+      size.height /
+      DEM_CONFIG.targetSpacingMeters
+    ) + 1;
+
+
+  columns =
+    Math.max(
+      8,
+      Math.min(
+        DEM_CONFIG.maxGridColumns,
+        columns
+      )
+    );
+
+
+  rows =
+    Math.max(
+      8,
+      Math.min(
+        DEM_CONFIG.maxGridRows,
+        rows
+      )
+    );
+
+
+  const coordinates = [];
+
+
+  for (
+    let row = 0;
+    row < rows;
+    row++
+  ) {
+
+    const lat =
+      bbox.minLat +
+      (
+        (bbox.maxLat - bbox.minLat) *
+        row /
+        (rows - 1)
+      );
 
 
     for (
-        let row = 0;
-        row < rows;
-        row++
+      let col = 0;
+      col < columns;
+      col++
     ) {
 
-        const y =
-            row /
-            (
-                rows - 1
-            );
+      const lng =
+        bbox.minLng +
+        (
+          (bbox.maxLng - bbox.minLng) *
+          col /
+          (columns - 1)
+        );
 
 
-        const lat =
-            bbox.north -
-            (
-                bbox.north -
-                bbox.south
-            ) *
-            y;
-
-
-        for (
-            let column = 0;
-            column < columns;
-            column++
-        ) {
-
-            const x =
-                column /
-                (
-                    columns - 1
-                );
-
-
-            const lng =
-                bbox.west +
-                (
-                    bbox.east -
-                    bbox.west
-                ) *
-                x;
-
-
-            coordinates.push({
-
-                lat:
-                    lat,
-
-                lng:
-                    lng
-
-            });
-
-        }
+      coordinates.push({
+        lat,
+        lng
+      });
 
     }
 
+  }
 
-    return {
 
-        width:
-            columns,
-
-        height:
-            rows,
-
-        coordinates:
-            coordinates,
-
-        west:
-            bbox.west,
-
-        east:
-            bbox.east,
-
-        south:
-            bbox.south,
-
-        north:
-            bbox.north
-
-    };
+  return {
+    rows,
+    columns,
+    bbox,
+    coordinates
+  };
 
 }
 
 
 /* =========================================================
-   CONSULTAR ELEVAÇÕES
-   ========================================================= */
+   CONSULTA ELEVAÇÃO
+========================================================= */
 
 async function requestElevations(
-    coordinates
+  coordinates
 ) {
 
-    const elevations = [];
+  const elevations =
+    new Array(
+      coordinates.length
+    ).fill(NaN);
 
 
-    for (
-        let start = 0;
+  for (
+    let start = 0;
+    start < coordinates.length;
+    start += DEM_CONFIG.batchSize
+  ) {
 
-        start <
-        coordinates.length;
-
-        start +=
+    const batch =
+      coordinates.slice(
+        start,
+        start +
         DEM_CONFIG.batchSize
-    ) {
-
-        const batch =
-            coordinates.slice(
-                start,
-                start +
-                DEM_CONFIG.batchSize
-            );
+      );
 
 
-        const latitude =
-            batch
-                .map(
-                    point =>
-                        point.lat.toFixed(
-                            6
-                        )
-                )
-                .join(",");
+    const latitude =
+      batch
+        .map(
+          p => p.lat.toFixed(6)
+        )
+        .join(",");
 
 
-        const longitude =
-            batch
-                .map(
-                    point =>
-                        point.lng.toFixed(
-                            6
-                        )
-                )
-                .join(",");
+    const longitude =
+      batch
+        .map(
+          p => p.lng.toFixed(6)
+        )
+        .join(",");
 
 
-        const url =
-            `${DEM_CONFIG.openMeteo}?latitude=${latitude}&longitude=${longitude}`;
+    const url =
+      `${DEM_CONFIG.url}` +
+      `?latitude=${encodeURIComponent(latitude)}` +
+      `&longitude=${encodeURIComponent(longitude)}`;
 
 
-        const response =
-            await fetch(
-                url
-            );
-
-
-        if (
-            !response.ok
-        ) {
-
-            throw new Error(
-                `Erro no serviço de elevação: HTTP ${response.status}`
-            );
-
+    const response =
+      await fetch(
+        url,
+        {
+          method: "GET",
+          cache: "no-store"
         }
+      );
 
 
-        const data =
-            await response.json();
+    if (!response.ok) {
 
-
-        if (
-            !data ||
-            !Array.isArray(
-                data.elevation
-            )
-        ) {
-
-            throw new Error(
-                "O serviço de elevação não retornou uma matriz válida."
-            );
-
-        }
-
-
-        elevations.push(
-            ...data.elevation
-        );
-
-
-        /*
-         * Pequena pausa entre lotes.
-         *
-         * Ajuda em conexões móveis e evita
-         * disparar todas as requisições ao mesmo
-         * tempo.
-         */
-
-        if (
-            start +
-            DEM_CONFIG.batchSize <
-            coordinates.length
-        ) {
-
-            await sleep(
-                80
-            );
-
-        }
+      throw new Error(
+        `Erro na API de elevação: HTTP ${response.status}`
+      );
 
     }
+
+
+    const data =
+      await response.json();
 
 
     if (
-        elevations.length !==
-        coordinates.length
+      !data ||
+      !Array.isArray(
+        data.elevation
+      )
     ) {
 
-        throw new Error(
-            "A quantidade de elevações retornada não corresponde à grade."
-        );
+      throw new Error(
+        "A API não retornou elevações."
+      );
 
     }
 
 
-    return elevations;
+    data.elevation.forEach(
+      (value, index) => {
 
-}
+        elevations[
+          start + index
+        ] = Number(value);
 
-
-/* =========================================================
-   SLEEP
-   ========================================================= */
-
-function sleep(
-    milliseconds
-) {
-
-    return new Promise(
-        resolve =>
-            setTimeout(
-                resolve,
-                milliseconds
-            )
+      }
     );
+
+
+    loading(
+      true,
+      `Obtendo terreno ${Math.min(
+        start + batch.length,
+        coordinates.length
+      )}/${coordinates.length}`
+    );
+
+  }
+
+
+  return elevations;
 
 }
 
 
 /* =========================================================
    CONSTRUIR DEM
-   ========================================================= */
+========================================================= */
 
-function buildDEM(
-    grid,
-    elevations
-) {
+async function buildDEM(points) {
 
-    const values =
-        new Float64Array(
-            elevations.length
-        );
+  const grid =
+    createSamplingGrid(points);
 
 
-    let min =
-        Infinity;
+  loading(
+    true,
+    "Preparando terreno..."
+  );
 
-    let max =
-        -Infinity;
 
-
-    for (
-        let i = 0;
-        i <
-        elevations.length;
-        i++
-    ) {
-
-        const value =
-            Number(
-                elevations[i]
-            );
-
-
-        values[i] =
-            value;
-
-
-        if (
-            Number.isFinite(
-                value
-            )
-        ) {
-
-            if (
-                value <
-                min
-            ) {
-
-                min =
-                    value;
-
-            }
-
-
-            if (
-                value >
-                max
-            ) {
-
-                max =
-                    value;
-
-            }
-
-        }
-
-    }
-
-
-    if (
-        !Number.isFinite(
-            min
-        ) ||
-        !Number.isFinite(
-            max
-        )
-    ) {
-
-        throw new Error(
-            "Não foi possível determinar as altitudes da área."
-        );
-
-    }
-
-
-    return {
-
-        width:
-            grid.width,
-
-        height:
-            grid.height,
-
-        values:
-            values,
-
-        west:
-            grid.west,
-
-        east:
-            grid.east,
-
-        south:
-            grid.south,
-
-        north:
-            grid.north,
-
-        min:
-            min,
-
-        max:
-            max
-
-    };
-
-}
-
-
-/* =========================================================
-   CONVERTER GEO PARA GRADE
-   ========================================================= */
-
-function geoToGrid(
-    lat,
-    lng,
-    dem
-) {
-
-    const x =
-        (
-            lng -
-            dem.west
-        ) /
-        (
-            dem.east -
-            dem.west
-        ) *
-        (
-            dem.width -
-            1
-        );
-
-
-    const y =
-        (
-            dem.north -
-            lat
-        ) /
-        (
-            dem.north -
-            dem.south
-        ) *
-        (
-            dem.height -
-            1
-        );
-
-
-    return {
-
-        x:
-            x,
-
-        y:
-            y
-
-    };
-
-}
-
-
-/* =========================================================
-   CONVERTER GRADE PARA GEO
-   ========================================================= */
-
-function gridToGeo(
-    x,
-    y,
-    dem
-) {
-
-    const lng =
-        dem.west +
-        (
-            x /
-            (
-                dem.width -
-                1
-            )
-        ) *
-        (
-            dem.east -
-            dem.west
-        );
-
-
-    const lat =
-        dem.north -
-        (
-            y /
-            (
-                dem.height -
-                1
-            )
-        ) *
-        (
-            dem.north -
-            dem.south
-        );
-
-
-    return {
-
-        lat:
-            lat,
-
-        lng:
-            lng
-
-    };
-
-}
-
-
-/* =========================================================
-   POLÍGONO EM COORDENADAS DA GRADE
-   ========================================================= */
-
-function polygonToGrid(
-    dem
-) {
-
-    return state.points.map(
-        point => {
-
-            return geoToGrid(
-                point.lat,
-                point.lng,
-                dem
-            );
-
-        }
+  const elevations =
+    await requestElevations(
+      grid.coordinates
     );
 
+
+  const valid =
+    elevations.filter(
+      Number.isFinite
+    );
+
+
+  if (!valid.length) {
+
+    throw new Error(
+      "Não foi possível obter elevações."
+    );
+
+  }
+
+
+  return {
+    rows: grid.rows,
+    columns: grid.columns,
+    bbox: grid.bbox,
+    coordinates: grid.coordinates,
+    elevations
+  };
+
 }
 
 
 /* =========================================================
-   INTERSEÇÃO ENTRE SEGMENTOS
-   ========================================================= */
+   CONVERTER GEO → GRID
+========================================================= */
 
-function segmentIntersection(
-    a,
-    b,
-    c,
-    d
+function geoToGrid(
+  lat,
+  lng,
+  bbox,
+  rows,
+  columns
 ) {
 
-    const denominator =
-        (
-            b.x -
-            a.x
-        ) *
-        (
-            d.y -
-            c.y
-        ) -
-        (
-            b.y -
-            a.y
-        ) *
-        (
-            d.x -
-            c.x
-        );
+  const x =
+    (
+      (lng - bbox.minLng) /
+      (
+        bbox.maxLng -
+        bbox.minLng
+      )
+    ) *
+    (columns - 1);
 
 
-    /*
-     * Segmentos paralelos.
-     */
-
-    if (
-        Math.abs(
-            denominator
-        ) <
-        0.000000001
-    ) {
-
-        return null;
-
-    }
+  const y =
+    (
+      (lat - bbox.minLat) /
+      (
+        bbox.maxLat -
+        bbox.minLat
+      )
+    ) *
+    (rows - 1);
 
 
-    const numeratorT =
-        (
-            c.x -
-            a.x
-        ) *
-        (
-            d.y -
-            c.y
-        ) -
-        (
-            c.y -
-            a.y
-        ) *
-        (
-            d.x -
-            c.x
-        );
+  return {
+    x,
+    y
+  };
+
+}
 
 
-    const numeratorU =
-        (
-            c.x -
-            a.x
-        ) *
-        (
-            b.y -
-            a.y
-        ) -
-        (
-            c.y -
-            a.y
-        ) *
-        (
-            b.x -
-            a.x
-        );
+/* =========================================================
+   CONVERTER GRID → GEO
+========================================================= */
+
+function gridToGeo(
+  x,
+  y,
+  bbox,
+  rows,
+  columns
+) {
+
+  const lng =
+    bbox.minLng +
+    (
+      x /
+      (columns - 1)
+    ) *
+    (
+      bbox.maxLng -
+      bbox.minLng
+    );
 
 
-    const t =
-        numeratorT /
-        denominator;
+  const lat =
+    bbox.minLat +
+    (
+      y /
+      (rows - 1)
+    ) *
+    (
+      bbox.maxLat -
+      bbox.minLat
+    );
 
 
-    const u =
-        numeratorU /
-        denominator;
+  return {
+    lat,
+    lng
+  };
+
+}
 
 
-    if (
-        t >= -0.000000001 &&
-        t <= 1.000000001 &&
-        u >= -0.000000001 &&
-        u <= 1.000000001
-    ) {
+/* =========================================================
+   INTERPOLAÇÃO DE PONTO
+========================================================= */
 
-        return {
+function interpolate(
+  a,
+  b,
+  value
+) {
 
-            t:
-                Math.max(
-                    0,
-                    Math.min(
-                        1,
-                        t
-                    )
-                ),
-
-            u:
-                Math.max(
-                    0,
-                    Math.min(
-                        1,
-                        u
-                    )
-                )
-
-        };
-
-    }
-
+  if (
+    !Number.isFinite(a.value) ||
+    !Number.isFinite(b.value)
+  ) {
 
     return null;
 
+  }
+
+
+  const denominator =
+    b.value - a.value;
+
+
+  if (
+    Math.abs(denominator) <
+    0.0000001
+  ) {
+
+    return null;
+
+  }
+
+
+  const t =
+    (
+      value - a.value
+    ) /
+    denominator;
+
+
+  if (
+    t < 0 ||
+    t > 1
+  ) {
+
+    return null;
+
+  }
+
+
+  return {
+    x:
+      a.x +
+      t *
+      (b.x - a.x),
+
+    y:
+      a.y +
+      t *
+      (b.y - a.y)
+  };
+
 }
 
 
 /* =========================================================
-   RECORTAR SEGMENTO PELO POLÍGONO
-   ========================================================= */
+   MARCHING SQUARES
+========================================================= */
 
-function clipSegmentToPolygon(
-    a,
-    b,
-    polygon
+function marchingSquares(
+  dem,
+  level
 ) {
 
-    const parameters = [
-        0,
-        1
+  const segments = [];
+
+
+  const rows =
+    dem.rows;
+
+  const cols =
+    dem.columns;
+
+
+  function getValue(row, col) {
+
+    return dem.elevations[
+      row * cols + col
     ];
 
-
-    /*
-     * Descobre todos os pontos onde o segmento
-     * cruza o limite do polígono.
-     */
-
-    for (
-        let i = 0;
-        i < polygon.length;
-        i++
-    ) {
-
-        const c =
-            polygon[i];
+  }
 
 
-        const d =
-            polygon[
-                (
-                    i + 1
-                ) %
-                polygon.length
-            ];
-
-
-        const result =
-            segmentIntersection(
-                a,
-                b,
-                c,
-                d
-            );
-
-
-        if (
-            result
-        ) {
-
-            parameters.push(
-                result.t
-            );
-
-        }
-
-    }
-
-
-    /*
-     * Ordena os pontos de corte.
-     */
-
-    parameters.sort(
-        (
-            a,
-            b
-        ) =>
-            a - b
-    );
-
-
-    /*
-     * Remove duplicações.
-     */
-
-    const unique = [];
-
-
-    parameters.forEach(
-        value => {
-
-            if (
-                unique.length ===
-                0
-            ) {
-
-                unique.push(
-                    value
-                );
-
-                return;
-
-            }
-
-
-            const previous =
-                unique[
-                    unique.length -
-                    1
-                ];
-
-
-            if (
-                Math.abs(
-                    value -
-                    previous
-                ) >
-                0.0000001
-            ) {
-
-                unique.push(
-                    value
-                );
-
-            }
-
-        }
-    );
-
-
-    const result = [];
-
-
-    /*
-     * Analisa cada trecho do segmento.
-     */
+  for (
+    let row = 0;
+    row < rows - 1;
+    row++
+  ) {
 
     for (
-        let i = 0;
-        i <
-        unique.length -
-        1;
-        i++
+      let col = 0;
+      col < cols - 1;
+      col++
     ) {
 
-        const t1 =
-            unique[i];
+      const v0 =
+        getValue(row, col);
 
-        const t2 =
-            unique[
-                i + 1
-            ];
+      const v1 =
+        getValue(row, col + 1);
 
+      const v2 =
+        getValue(row + 1, col + 1);
 
-        if (
-            t2 -
-            t1 <
-            0.0000001
-        ) {
-
-            continue;
-
-        }
+      const v3 =
+        getValue(row + 1, col);
 
 
-        const middleT =
-            (
-                t1 +
-                t2
-            ) /
-            2;
+      if (
+        !Number.isFinite(v0) ||
+        !Number.isFinite(v1) ||
+        !Number.isFinite(v2) ||
+        !Number.isFinite(v3)
+      ) {
+
+        continue;
+
+      }
 
 
-        const middle = {
+      const x = col;
+      const y = row;
 
-            x:
-                a.x +
-                (
-                    b.x -
-                    a.x
-                ) *
-                middleT,
 
-            y:
-                a.y +
-                (
-                    b.y -
-                    a.y
-                ) *
-                middleT
+      const p0 = {
+        x,
+        y,
+        value: v0
+      };
+
+      const p1 = {
+        x: x + 1,
+        y,
+        value: v1
+      };
+
+      const p2 = {
+        x: x + 1,
+        y: y + 1,
+        value: v2
+      };
+
+      const p3 = {
+        x,
+        y: y + 1,
+        value: v3
+      };
+
+
+      let code = 0;
+
+
+      if (v0 >= level) code |= 1;
+      if (v1 >= level) code |= 2;
+      if (v2 >= level) code |= 4;
+      if (v3 >= level) code |= 8;
+
+
+      if (
+        code === 0 ||
+        code === 15
+      ) {
+
+        continue;
+
+      }
+
+
+      const e0 =
+        interpolate(
+          p0,
+          p1,
+          level
+        );
+
+      const e1 =
+        interpolate(
+          p1,
+          p2,
+          level
+        );
+
+      const e2 =
+        interpolate(
+          p2,
+          p3,
+          level
+        );
+
+      const e3 =
+        interpolate(
+          p3,
+          p0,
+          level
+        );
+
+
+      const add =
+        (a, b) => {
+
+          if (a && b) {
+
+            segments.push([
+              [a.x, a.y],
+              [b.x, b.y]
+            ]);
+
+          }
 
         };
 
 
-        if (
-            pointInPolygon(
-                middle,
-                polygon
-            )
-        ) {
+      switch (code) {
 
-            result.push({
+        case 1:
+        case 14:
+          add(e3, e0);
+          break;
 
-                a: {
+        case 2:
+        case 13:
+          add(e0, e1);
+          break;
 
-                    x:
-                        a.x +
-                        (
-                            b.x -
-                            a.x
-                        ) *
-                        t1,
+        case 3:
+        case 12:
+          add(e3, e1);
+          break;
 
-                    y:
-                        a.y +
-                        (
-                            b.y -
-                            a.y
-                        ) *
-                        t1
+        case 4:
+        case 11:
+          add(e1, e2);
+          break;
 
-                },
+        case 5:
+          add(e3, e2);
+          break;
 
-                b: {
+        case 6:
+        case 9:
+          add(e0, e2);
+          break;
 
-                    x:
-                        a.x +
-                        (
-                            b.x -
-                            a.x
-                        ) *
-                        t2,
+        case 7:
+        case 8:
+          add(e3, e2);
+          break;
 
-                    y:
-                        a.y +
-                        (
-                            b.y -
-                            a.y
-                        ) *
-                        t2
+        case 10:
+          add(e3, e0);
+          add(e1, e2);
+          break;
 
-                }
-
-            });
-
-        }
+      }
 
     }
 
+  }
 
-    return result;
+
+  return segments;
 
 }
 
 
 /* =========================================================
-   EXTRair SEGMENTOS DE UMA CURVA D3
-   ========================================================= */
+   SEGMENTO DENTRO DO POLÍGONO
+========================================================= */
 
-function extractContourSegments(
-    contour,
-    dem
+function clipSegmentToPolygon(
+  segment,
+  polygon
 ) {
 
-    const polygon =
-        polygonToGrid(
-            dem
-        );
+  const a = {
+    x: segment[0][0],
+    y: segment[0][1]
+  };
+
+  const b = {
+    x: segment[1][0],
+    y: segment[1][1]
+  };
 
 
-    const segments = [];
+  /*
+   * Para manter o código robusto em áreas
+   * côncavas, dividimos o segmento em pequenos
+   * trechos e mantemos apenas os que estão dentro.
+   */
+
+  const pieces = [];
+
+  const steps = 20;
+
+  let current = null;
+
+
+  for (
+    let i = 0;
+    i <= steps;
+    i++
+  ) {
+
+    const t =
+      i / steps;
+
+
+    const p = {
+      x:
+        a.x +
+        t * (b.x - a.x),
+
+      y:
+        a.y +
+        t * (b.y - a.y)
+    };
+
+
+    const inside =
+      pointInGridPolygon(
+        p,
+        polygon
+      );
+
+
+    if (inside && !current) {
+
+      current = p;
+
+    }
 
 
     if (
-        !contour ||
-        !contour.coordinates
+      (!inside || i === steps) &&
+      current
     ) {
 
-        return segments;
+      const end =
+        inside
+          ? p
+          : {
+              x:
+                a.x +
+                (
+                  (i - 1) /
+                  steps
+                ) *
+                (b.x - a.x),
+
+              y:
+                a.y +
+                (
+                  (i - 1) /
+                  steps
+                ) *
+                (b.y - a.y)
+            };
+
+
+      if (
+        Math.hypot(
+          end.x - current.x,
+          end.y - current.y
+        ) > 0.0001
+      ) {
+
+        pieces.push([
+          [current.x, current.y],
+          [end.x, end.y]
+        ]);
+
+      }
+
+
+      current = null;
 
     }
 
-
-    /*
-     * D3 retorna MultiPolygon.
-     *
-     * Estrutura:
-     *
-     * coordinates
-     *   polygon
-     *     ring
-     *       [x,y]
-     */
-
-    contour.coordinates.forEach(
-        polygonGroup => {
-
-            polygonGroup.forEach(
-                ring => {
-
-                    if (
-                        !ring ||
-                        ring.length <
-                        2
-                    ) {
-
-                        return;
-
-                    }
+  }
 
 
-                    for (
-                        let i = 0;
-                        i <
-                        ring.length -
-                        1;
-                        i++
-                    ) {
-
-                        const a = {
-
-                            x:
-                                ring[i][0],
-
-                            y:
-                                ring[i][1]
-
-                        };
-
-
-                        const b = {
-
-                            x:
-                                ring[
-                                    i + 1
-                                ][0],
-
-                            y:
-                                ring[
-                                    i + 1
-                                ][1]
-
-                        };
-
-
-                        const clipped =
-                            clipSegmentToPolygon(
-                                a,
-                                b,
-                                polygon
-                            );
-
-
-                        clipped.forEach(
-                            segment => {
-
-                                const p1 =
-                                    gridToGeo(
-                                        segment.a.x,
-                                        segment.a.y,
-                                        dem
-                                    );
-
-
-                                const p2 =
-                                    gridToGeo(
-                                        segment.b.x,
-                                        segment.b.y,
-                                        dem
-                                    );
-
-
-                                segments.push({
-
-                                    elevation:
-                                        Number(
-                                            contour.value
-                                        ),
-
-                                    a:
-                                        p1,
-
-                                    b:
-                                        p2
-
-                                });
-
-                            }
-                        );
-
-                    }
-
-                }
-            );
-
-        }
-    );
-
-
-    return segments;
+  return pieces;
 
 }
 
 
 /* =========================================================
-   DETERMINAR CURVAS PRINCIPAIS
-   ========================================================= */
+   PONTO DENTRO DO POLÍGONO EM GRID
+========================================================= */
+
+function pointInGridPolygon(
+  point,
+  polygon
+) {
+
+  let inside = false;
+
+
+  for (
+    let i = 0,
+        j = polygon.length - 1;
+
+    i < polygon.length;
+
+    j = i++
+  ) {
+
+    const xi =
+      polygon[i].x;
+
+    const yi =
+      polygon[i].y;
+
+    const xj =
+      polygon[j].x;
+
+    const yj =
+      polygon[j].y;
+
+
+    const intersects =
+      (
+        yi > point.y
+      ) !==
+      (
+        yj > point.y
+      ) &&
+      point.x <
+      (
+        (xj - xi) *
+        (point.y - yi) /
+        (yj - yi) +
+        xi
+      );
+
+
+    if (intersects) {
+      inside = !inside;
+    }
+
+  }
+
+
+  return inside;
+
+}
+
+
+/* =========================================================
+   CONVERTER SEGMENTOS PARA LAT/LNG
+========================================================= */
+
+function segmentToLatLng(
+  segment,
+  dem
+) {
+
+  const a =
+    gridToGeo(
+      segment[0][0],
+      segment[0][1],
+      dem.bbox,
+      dem.rows,
+      dem.columns
+    );
+
+
+  const b =
+    gridToGeo(
+      segment[1][0],
+      segment[1][1],
+      dem.bbox,
+      dem.rows,
+      dem.columns
+    );
+
+
+  return [
+    [a.lat, a.lng],
+    [b.lat, b.lng]
+  ];
+
+}
+
+
+/* =========================================================
+   CURVAS
+========================================================= */
 
 function isMajorContour(
-    elevation,
-    interval
+  elevation,
+  interval
 ) {
 
-    /*
-     * A cada 5 intervalos:
-     *
-     * 1 m -> 5 m
-     * 2 m -> 10 m
-     * 5 m -> 25 m
-     * etc.
-     */
+  /*
+   * A cada 5 intervalos é curva principal.
+   */
 
-    const multiple =
-        Math.round(
-            elevation /
-            interval
-        );
-
-
-    return (
-        multiple %
-        5 ===
-        0
+  const index =
+    Math.round(
+      elevation / interval
     );
+
+
+  return (
+    Math.abs(index % 5) === 0
+  );
 
 }
 
 
 /* =========================================================
-   DESENHAR SEGMENTO DE CURVA
-   ========================================================= */
+   DESENHAR SEGMENTO
+========================================================= */
 
 function drawContourSegment(
-    segment,
-    interval
+  segment,
+  elevation,
+  interval
 ) {
 
-    const major =
-        isMajorContour(
-            segment.elevation,
-            interval
-        );
-
-
-    const line =
-        L.polyline(
-            [
-                [
-                    segment.a.lat,
-                    segment.a.lng
-                ],
-                [
-                    segment.b.lat,
-                    segment.b.lng
-                ]
-            ],
-            {
-
-                color:
-                    major
-                        ? "#111827"
-                        : "#475467",
-
-                weight:
-                    major
-                        ? 3
-                        : 1.25,
-
-                opacity:
-                    0.95,
-
-                interactive:
-                    true,
-
-                className:
-                    major
-                        ? "contour-line major"
-                        : "contour-line"
-
-            }
-        )
-        .addTo(
-            state.map
-        );
-
-
-    line._elevation =
-        segment.elevation;
-
-
-    line._major =
-        major;
-
-
-    line.bindTooltip(
-        `${numberBR(
-            segment.elevation,
-            2
-        )} m`,
-        {
-            sticky:
-                true,
-
-            direction:
-                "top"
-        }
+  const major =
+    isMajorContour(
+      elevation,
+      interval
     );
 
 
-    state.contourLayers.push(
-        line
+  const line =
+    L.polyline(
+      segment,
+      {
+        color:
+          major
+            ? "#101827"
+            : "#26384d",
+
+        weight:
+          major
+            ? 3.2
+            : 1.7,
+
+        opacity: 0.95,
+
+        interactive: true
+      }
     );
 
 
-    state.contourData.push(
-        segment
-    );
-
-
-    return line;
-
-}
-
-
-/* =========================================================
-   GERAR CURVAS COM D3
-   ========================================================= */
-
-function generateD3Contours(
-    dem
-) {
-
-    if (
-        typeof d3 ===
-        "undefined"
-    ) {
-
-        throw new Error(
-            "A biblioteca D3 Contours não foi carregada."
-        );
-
+  line.bindTooltip(
+    `${numberBR(elevation, 2)} m`,
+    {
+      sticky: true,
+      className:
+        "contour-tooltip"
     }
+  );
 
 
-    const interval =
-        getContourInterval();
+  line.addTo(
+    state.map
+  );
 
 
-    /*
-     * Arredondamento da menor cota para cima.
-     */
+  state.contourLayers.push(
+    line
+  );
 
-    const first =
-        Math.ceil(
-            dem.min /
-            interval
-        ) *
-        interval;
 
-
-    /*
-     * Arredondamento da maior cota para baixo.
-     */
-
-    const last =
-        Math.floor(
-            dem.max /
-            interval
-        ) *
-        interval;
-
-
-    if (
-        first >
-        last
-    ) {
-
-        return 0;
-
-    }
-
-
-    const thresholds = [];
-
-
-    /*
-     * Evita uma quantidade absurda de
-     * níveis caso alguém coloque uma
-     * equidistância extremamente pequena.
-     */
-
-    const numberOfLevels =
-        Math.floor(
-            (
-                last -
-                first
-            ) /
-            interval
-        ) + 1;
-
-
-    if (
-        numberOfLevels >
-        5000
-    ) {
-
-        throw new Error(
-            "A equidistância escolhida gera curvas demais. Aumente a equidistância."
-        );
-
-    }
-
-
-    for (
-        let i = 0;
-        i <
-        numberOfLevels;
-        i++
-    ) {
-
-        const elevation =
-            first +
-            i *
-            interval;
-
-
-        thresholds.push(
-            Number(
-                elevation.toFixed(
-                    6
-                )
-            )
-        );
-
-    }
-
-
-    /*
-     * Gerador de isolinhas.
-     */
-
-    const generator =
-        d3
-            .contours()
-            .size(
-                [
-                    dem.width,
-                    dem.height
-                ]
-            )
-            .thresholds(
-                thresholds
-            );
-
-
-    const contours =
-        generator(
-            Array.from(
-                dem.values
-            )
-        );
-
-
-    let count =
-        0;
-
-
-    contours.forEach(
-        contour => {
-
-            const segments =
-                extractContourSegments(
-                    contour,
-                    dem
-                );
-
-
-            segments.forEach(
-                segment => {
-
-                    drawContourSegment(
-                        segment,
-                        interval
-                    );
-
-
-                    count++;
-
-                }
-            );
-
-        }
-    );
-
-
-    return count;
-
-}
-
-
-/* =========================================================
-   ESTATÍSTICAS DO DEM
-   ========================================================= */
-
-function updateDEMStats(
-    dem
-) {
-
-    if ($("minZ")) {
-
-        $("minZ")
-            .textContent =
-            `${numberBR(
-                dem.min,
-                2
-            )} m`;
-
-    }
-
-
-    if ($("maxZ")) {
-
-        $("maxZ")
-            .textContent =
-            `${numberBR(
-                dem.max,
-                2
-            )} m`;
-
-    }
-
-
-    if ($("sourceInfo")) {
-
-        $("sourceInfo")
-            .textContent =
-            "DEM: Copernicus GLO-90 / Open-Meteo";
-
-    }
-
-}
-
-
-/* =========================================================
-   VALIDAR ÁREA
-   ========================================================= */
-
-function validateArea() {
-
-    if (
-        state.points.length <
-        3
-    ) {
-
-        toast(
-            "Marque pelo menos 3 vértices."
-        );
-
-        return false;
-
-    }
-
-
-    if (
-        state.drawing
-    ) {
-
-        closeArea();
-
-    }
-
-
-    if (
-        !state.closed
-    ) {
-
-        toast(
-            "Feche a área antes de gerar as curvas."
-        );
-
-        return false;
-
-    }
-
-
-    return true;
-
-}
-
-
-/* =========================================================
-   GERAR DEM
-   ========================================================= */
-
-async function createDEMForArea() {
-
-    const bbox =
-        getBBox();
-
-
-    const grid =
-        createSamplingGrid(
-            bbox
-        );
-
-
-    /*
-     * Mostra informação no status.
-     */
-
-    status(
-        `Preparando ${grid.coordinates.length.toLocaleString(
-            "pt-BR"
-        )} pontos de elevação...`
-    );
-
-
-    loading(
-        true,
-        "Obtendo terreno...",
-        `Consultando ${grid.coordinates.length.toLocaleString(
-            "pt-BR"
-        )} pontos de elevação.`
-    );
-
-
-    const elevations =
-        await requestElevations(
-            grid.coordinates
-        );
-
-
-    const dem =
-        buildDEM(
-            grid,
-            elevations
-        );
-
-
-    state.dem =
-        dem;
-
-
-    updateDEMStats(
-        dem
-    );
-
-
-    return dem;
+  state.contourData.push({
+    elevation,
+    points: segment,
+    major
+  });
 
 }
 
 
 /* =========================================================
    GERAR CURVAS
-   ========================================================= */
+========================================================= */
+
+function generateContoursFromDEM(
+  dem
+) {
+
+  const interval =
+    getContourInterval();
+
+
+  const values =
+    dem.elevations.filter(
+      Number.isFinite
+    );
+
+
+  if (!values.length) {
+
+    throw new Error(
+      "Não há dados de elevação válidos."
+    );
+
+  }
+
+
+  const min =
+    Math.min(...values);
+
+  const max =
+    Math.max(...values);
+
+
+  const start =
+    Math.ceil(
+      min / interval
+    ) * interval;
+
+
+  const polygonGrid =
+    state.points.map(
+      point =>
+        geoToGrid(
+          point.lat,
+          point.lng,
+          dem.bbox,
+          dem.rows,
+          dem.columns
+        )
+    );
+
+
+  let total = 0;
+
+
+  for (
+    let level = start;
+    level <= max;
+    level += interval
+  ) {
+
+    const segments =
+      marchingSquares(
+        dem,
+        level
+      );
+
+
+    for (
+      const segment of segments
+    ) {
+
+      const clipped =
+        clipSegmentToPolygon(
+          segment,
+          polygonGrid
+        );
+
+
+      if (!clipped) {
+        continue;
+      }
+
+
+      for (
+        const piece of clipped
+      ) {
+
+        const latlng =
+          segmentToLatLng(
+            piece,
+            dem
+          );
+
+
+        drawContourSegment(
+          latlng,
+          level,
+          interval
+        );
+
+
+        total++;
+
+      }
+
+    }
+
+  }
+
+
+  /*
+   * Modo somente curvas principais.
+   */
+
+  const mode =
+    $("curveMode")?.value ||
+    "all";
+
+
+  if (mode === "major") {
+
+    state.contourLayers
+      .forEach(
+        (layer, index) => {
+
+          const data =
+            state.contourData[index];
+
+          if (
+            data &&
+            !data.major
+          ) {
+
+            layer.remove();
+
+          }
+
+        }
+      );
+
+  }
+
+
+  return {
+    count: total,
+    min,
+    max
+  };
+
+}
+
+
+/* =========================================================
+   GERAR DEM + CURVAS
+========================================================= */
 
 async function generateContours() {
 
-    if (
-        state.processing
-    ) {
-
-        return;
-
-    }
+  if (state.processing) {
+    return;
+  }
 
 
-    if (
-        !validateArea()
-    ) {
+  try {
 
-        return;
-
-    }
+    validateArea();
 
 
-    state.processing =
-        true;
+    state.processing = true;
 
 
     clearContours();
 
 
-    try {
-
-        loading(
-            true,
-            "Obtendo modelo do terreno...",
-            "Isso pode levar alguns segundos."
-        );
+    loading(
+      true,
+      "Preparando análise..."
+    );
 
 
-        const dem =
-            await createDEMForArea();
+    status(
+      "Obtendo dados de elevação..."
+    );
 
 
-        loading(
-            true,
-            "Calculando curvas...",
-            "Extraindo as isolinhas da superfície."
-        );
+    state.dem =
+      await buildDEM(
+        state.points
+      );
 
 
-        await sleep(
-            50
-        );
+    updateStats();
 
 
-        const count =
-            generateD3Contours(
-                dem
-            );
+    loading(
+      true,
+      "Calculando curvas de nível..."
+    );
 
 
-        if (
-            count === 0
-        ) {
-
-            throw new Error(
-                "Nenhuma curva foi encontrada na área."
-            );
-
-        }
+    const result =
+      generateContoursFromDEM(
+        state.dem
+      );
 
 
-        status(
-            `${count.toLocaleString(
-                "pt-BR"
-            )} segmentos de curvas gerados.`
-        );
+    updateStats();
 
 
-        toast(
-            "Curvas de nível geradas."
-        );
+    if ($("demSource")) {
+
+      $("demSource").textContent =
+        "Copernicus GLO-90";
+
+    }
 
 
-    } catch (
-        error
+    if (result.count === 0) {
+
+      status(
+        "Nenhuma curva foi encontrada para a equidistância escolhida."
+      );
+
+      toast(
+        "Nenhuma curva encontrada."
+      );
+
+    } else {
+
+      status(
+        `${result.count} segmentos de curva gerados.`
+      );
+
+
+      toast(
+        `${result.count} segmentos gerados.`
+      );
+
+    }
+
+
+  } catch (error) {
+
+    console.error(error);
+
+
+    status(
+      "Erro durante a geração."
+    );
+
+
+    toast(
+      error.message ||
+      "Não foi possível gerar as curvas."
+    );
+
+
+  } finally {
+
+    state.processing = false;
+
+    loading(false);
+
+  }
+
+}
+
+
+/* =========================================================
+   VALIDAÇÃO
+========================================================= */
+
+function validateArea() {
+
+  if (
+    state.points.length < 3
+  ) {
+
+    throw new Error(
+      "A área precisa ter pelo menos 3 vértices."
+    );
+
+  }
+
+
+  if (!state.closed) {
+
+    throw new Error(
+      'Feche a área antes de gerar as curvas.'
+    );
+
+  }
+
+
+  const area =
+    polygonAreaM2(
+      state.points
+    );
+
+
+  if (
+    !Number.isFinite(area) ||
+    area <= 0
+  ) {
+
+    throw new Error(
+      "A área desenhada é inválida."
+    );
+
+  }
+
+}
+
+
+/* =========================================================
+   INSERIR VÉRTICE NA BORDA
+========================================================= */
+
+function closestPointOnSegment(
+  p,
+  a,
+  b
+) {
+
+  const dx =
+    b.x - a.x;
+
+  const dy =
+    b.y - a.y;
+
+
+  if (
+    dx === 0 &&
+    dy === 0
+  ) {
+
+    return {
+      x: a.x,
+      y: a.y,
+      t: 0
+    };
+
+  }
+
+
+  const t =
+    (
+      (p.x - a.x) * dx +
+      (p.y - a.y) * dy
+    ) /
+    (
+      dx * dx +
+      dy * dy
+    );
+
+
+  const clamped =
+    Math.max(
+      0,
+      Math.min(
+        1,
+        t
+      )
+    );
+
+
+  return {
+    x:
+      a.x +
+      clamped * dx,
+
+    y:
+      a.y +
+      clamped * dy,
+
+    t:
+      clamped
+  };
+
+}
+
+
+function insertVertexAtClosestEdge(
+  latlng
+) {
+
+  if (
+    !state.closed ||
+    state.points.length < 3
+  ) {
+    return;
+  }
+
+
+  const refLat =
+    latlng.lat;
+
+
+  const R =
+    6378137;
+
+
+  const scaleX =
+    Math.PI / 180 *
+    R *
+    Math.cos(
+      refLat *
+      Math.PI / 180
+    );
+
+
+  const scaleY =
+    Math.PI / 180 *
+    R;
+
+
+  const p = {
+    x:
+      latlng.lng *
+      scaleX,
+
+    y:
+      latlng.lat *
+      scaleY
+  };
+
+
+  let best = null;
+
+
+  for (
+    let i = 0;
+    i < state.points.length;
+    i++
+  ) {
+
+    const j =
+      (
+        i + 1
+      ) %
+      state.points.length;
+
+
+    const a = {
+      x:
+        state.points[i].lng *
+        scaleX,
+
+      y:
+        state.points[i].lat *
+        scaleY
+    };
+
+
+    const b = {
+      x:
+        state.points[j].lng *
+        scaleX,
+
+      y:
+        state.points[j].lat *
+        scaleY
+    };
+
+
+    const closest =
+      closestPointOnSegment(
+        p,
+        a,
+        b
+      );
+
+
+    const distance =
+      Math.hypot(
+        p.x - closest.x,
+        p.y - closest.y
+      );
+
+
+    if (
+      !best ||
+      distance < best.distance
     ) {
 
-        console.error(
-            error
-        );
-
-
-        status(
-            "Erro ao gerar curvas."
-        );
-
-
-        toast(
-            error.message ||
-            "Erro desconhecido ao processar o terreno."
-        );
-
-    } finally {
-
-        loading(
-            false
-        );
-
-
-        state.processing =
-            false;
+      best = {
+        index: i,
+        distance,
+        point: closest
+      };
 
     }
+
+  }
+
+
+  if (!best) {
+    return;
+  }
+
+
+  const newPoint = {
+    lat:
+      best.point.y /
+      scaleY,
+
+    lng:
+      best.point.x /
+      scaleX
+  };
+
+
+  state.undoStack.push(
+    clonePoints()
+  );
+
+
+  state.points.splice(
+    best.index + 1,
+    0,
+    newPoint
+  );
+
+
+  renderMarkers();
+
+  redrawPolygon();
+
+  clearContours();
+
+  state.dem = null;
+
+  updateStats();
+
+
+  status(
+    "Novo vértice inserido na borda."
+  );
 
 }
 
 
 /* =========================================================
-   BOTÃO GERAR
-   ========================================================= */
+   KML
+========================================================= */
 
-if (
-    $("generateBtn")
-) {
+function escapeXML(value) {
 
-    $("generateBtn")
-        .addEventListener(
-            "click",
-            generateContours
-        );
+  return String(value)
+    .replace(
+      /&/g,
+      "&amp;"
+    )
+    .replace(
+      /</g,
+      "&lt;"
+    )
+    .replace(
+      />/g,
+      "&gt;"
+    )
+    .replace(
+      /"/g,
+      "&quot;"
+    )
+    .replace(
+      /'/g,
+      "&apos;"
+    );
 
 }
 
-
-/* =========================================================
-   RESIZE DO MAPA
-   ========================================================= */
-
-window.addEventListener(
-    "resize",
-    () => {
-
-        setTimeout(
-            () => {
-
-                state.map.invalidateSize();
-
-            },
-            150
-        );
-
-    }
-);
-
-/* =========================================================
-   PARTE 3 — EXPORTAÇÃO, KML, DXF, IMPORTAÇÃO E FINALIZAÇÃO
-   ========================================================= */
-
-
-/* =========================================================
-   UTILITÁRIOS DE EXPORTAÇÃO
-   ========================================================= */
 
 function downloadBlob(
-    content,
-    filename,
-    type
+  content,
+  filename,
+  type
 ) {
 
-    const blob =
-        new Blob(
-            [content],
-            {
-                type:
-                    type
-            }
-        );
-
-
-    const url =
-        URL.createObjectURL(
-            blob
-        );
-
-
-    const link =
-        document.createElement(
-            "a"
-        );
-
-
-    link.href =
-        url;
-
-
-    link.download =
-        filename;
-
-
-    document.body.appendChild(
-        link
+  const blob =
+    new Blob(
+      [content],
+      { type }
     );
 
 
-    link.click();
-
-
-    link.remove();
-
-
-    setTimeout(
-        () => {
-
-            URL.revokeObjectURL(
-                url
-            );
-
-        },
-        1000
+  const url =
+    URL.createObjectURL(
+      blob
     );
 
-}
+
+  const link =
+    document.createElement(
+      "a"
+    );
 
 
-/* =========================================================
-   ESCAPAR XML
-   ========================================================= */
+  link.href = url;
 
-function escapeXML(
-    value
-) {
+  link.download = filename;
 
-    return String(
-        value
-    )
-        .replace(
-            /&/g,
-            "&amp;"
-        )
-        .replace(
-            /</g,
-            "&lt;"
-        )
-        .replace(
-            />/g,
-            "&gt;"
-        )
-        .replace(
-            /"/g,
-            "&quot;"
-        )
-        .replace(
-            /'/g,
-            "&apos;"
-        );
+  document.body.appendChild(
+    link
+  );
+
+
+  link.click();
+
+  link.remove();
+
+
+  setTimeout(
+    () =>
+      URL.revokeObjectURL(
+        url
+      ),
+    1000
+  );
 
 }
 
-
-/* =========================================================
-   DATA PARA NOME DO ARQUIVO
-   ========================================================= */
 
 function fileDate() {
 
-    const now =
-        new Date();
+  const now =
+    new Date();
 
 
-    const year =
-        now.getFullYear();
+  const pad =
+    value =>
+      String(value)
+        .padStart(2, "0");
 
 
-    const month =
-        String(
-            now.getMonth() + 1
-        )
-        .padStart(
-            2,
-            "0"
-        );
-
-
-    const day =
-        String(
-            now.getDate()
-        )
-        .padStart(
-            2,
-            "0"
-        );
-
-
-    const hour =
-        String(
-            now.getHours()
-        )
-        .padStart(
-            2,
-            "0"
-        );
-
-
-    const minute =
-        String(
-            now.getMinutes()
-        )
-        .padStart(
-            2,
-            "0"
-        );
-
-
-    return `${year}${month}${day}_${hour}${minute}`;
+  return (
+    now.getFullYear() +
+    pad(now.getMonth() + 1) +
+    pad(now.getDate()) +
+    "_" +
+    pad(now.getHours()) +
+    pad(now.getMinutes())
+  );
 
 }
 
 
 /* =========================================================
-   KML — CABEÇALHO
-   ========================================================= */
+   EXPORTAR KML
+========================================================= */
 
-function kmlHeader() {
+function exportKML() {
 
-    return `<?xml version="1.0" encoding="UTF-8"?>
+  if (
+    state.points.length < 3
+  ) {
+
+    toast(
+      "Não há uma área para exportar."
+    );
+
+    return;
+
+  }
+
+
+  let xml =
+`<?xml version="1.0" encoding="UTF-8"?>
 <kml xmlns="http://www.opengis.net/kml/2.2">
 <Document>
 <name>MVA Geo - Contour Map</name>
-
-<Style id="contour">
-<LineStyle>
-<color>ff333333</color>
-<width>1.5</width>
-</LineStyle>
-</Style>
-
-<Style id="majorContour">
-<LineStyle>
-<color>ff111111</color>
-<width>3</width>
-</LineStyle>
-</Style>
-
 `;
 
-}
+
+  /* ÁREA */
+
+  const areaCoordinates =
+    state.points
+      .map(
+        p =>
+          `${p.lng},${p.lat},0`
+      )
+      .join(" ");
 
 
-/* =========================================================
-   KML — ÁREA
-   ========================================================= */
-
-function polygonToKML() {
-
-    if (
-        state.points.length <
-        3
-    ) {
-
-        return "";
-
-    }
+  const closedCoordinates =
+    areaCoordinates +
+    ` ${state.points[0].lng},${state.points[0].lat},0`;
 
 
-    const coordinates =
-        state.points
-            .map(
-                point =>
-                    `${point.lng.toFixed(
-                        8
-                    )},${point.lat.toFixed(
-                        8
-                    )},0`
-            )
-            .join(" ");
-
-
-    const first =
-        state.points[0];
-
-
-    const closedCoordinates =
-        `${coordinates} ${first.lng.toFixed(
-            8
-        )},${first.lat.toFixed(
-            8
-        )},0`;
-
-
-    return `
+  xml +=
+`
 <Placemark>
-<name>Área delimitada</name>
+<name>Área</name>
 <Style>
 <LineStyle>
-<color>ff176b45</color>
-<width>3</width>
+<color>ff147a4b</color>
+<width>4</width>
 </LineStyle>
 <PolyStyle>
-<color>33176b45</color>
+<color>33147a4b</color>
 </PolyStyle>
 </Style>
 <Polygon>
@@ -3270,1816 +2657,1217 @@ ${closedCoordinates}
 </Placemark>
 `;
 
-}
+
+  /* CURVAS */
+
+  state.contourData.forEach(
+    contour => {
+
+      const coordinates =
+        contour.points
+          .map(
+            p =>
+              `${p[1]},${p[0]},${contour.elevation}`
+          )
+          .join(" ");
 
 
-/* =========================================================
-   KML — CURVAS
-   ========================================================= */
-
-function contoursToKML() {
-
-    if (
-        state.contourData.length ===
-        0
-    ) {
-
-        return "";
-
-    }
-
-
-    let output =
-        "";
-
-
-    state.contourData.forEach(
-        segment => {
-
-            const major =
-                isMajorContour(
-                    segment.elevation,
-                    getContourInterval()
-                );
-
-
-            output += `
+      xml +=
+`
 <Placemark>
-<name>Curva ${segment.elevation.toFixed(
-                2
-            )} m</name>
-
-<description>
-Cota: ${segment.elevation.toFixed(
-                2
-            )} m
-</description>
+<name>${escapeXML(
+  numberBR(
+    contour.elevation,
+    2
+  ) +
+  " m"
+)}</name>
 
 <ExtendedData>
-<Data name="elevacao">
-<value>${segment.elevation.toFixed(
-                3
-            )}</value>
+<Data name="elevation">
+<value>${contour.elevation}</value>
 </Data>
-
-<Data name="fonte">
-<value>Copernicus GLO-90 / Open-Meteo</value>
+<Data name="source">
+<value>Copernicus GLO-90</value>
 </Data>
 </ExtendedData>
 
-<styleUrl>#${major
-                ? "majorContour"
-                : "contour"
-            }</styleUrl>
+<Style>
+<LineStyle>
+<color>${
+  contour.major
+    ? "ff101827"
+    : "ff26384d"
+}</color>
+<width>${
+  contour.major
+    ? "3"
+    : "1.5"
+}</width>
+</LineStyle>
+</Style>
 
 <LineString>
 <altitudeMode>absolute</altitudeMode>
 <coordinates>
-${segment.a.lng.toFixed(
-                8
-            )},${segment.a.lat.toFixed(
-                8
-            )},${segment.elevation.toFixed(
-                3
-            )}
-${segment.b.lng.toFixed(
-                8
-            )},${segment.b.lat.toFixed(
-                8
-            )},${segment.elevation.toFixed(
-                3
-            )}
+${coordinates}
 </coordinates>
 </LineString>
-
 </Placemark>
 `;
 
-        }
-    );
-
-
-    return output;
-
-}
-
-
-/* =========================================================
-   EXPORTAR KML
-   ========================================================= */
-
-function exportKML() {
-
-    if (
-        state.points.length <
-        3
-    ) {
-
-        toast(
-            "Delimite uma área primeiro."
-        );
-
-        return;
-
     }
+  );
 
 
-    if (
-        state.contourData.length ===
-        0
-    ) {
-
-        toast(
-            "Gere as curvas antes de exportar."
-        );
-
-        return;
-
-    }
-
-
-    const kml =
-        kmlHeader() +
-        polygonToKML() +
-        contoursToKML() +
-        `
+  xml +=
+`
 </Document>
 </kml>`;
 
 
-    downloadBlob(
-        kml,
-        `MVA_Geo_Contour_${fileDate()}.kml`,
-        "application/vnd.google-earth.kml+xml"
-    );
+  downloadBlob(
+    xml,
+    `MVA_Contour_${fileDate()}.kml`,
+    "application/vnd.google-earth.kml+xml"
+  );
 
 
-    toast(
-        "KML exportado com sucesso."
-    );
-
-}
-
-
-/* =========================================================
-   COORDENADAS PARA DXF
-   ========================================================= */
-
-function dxfNumber(
-    value
-) {
-
-    return Number(
-        value
-    ).toFixed(
-        4
-    );
+  toast(
+    "KML exportado."
+  );
 
 }
 
 
 /* =========================================================
-   CONVERTER LAT/LNG PARA COORDENADAS LOCAIS
-   ========================================================= */
+   PROJEÇÃO LOCAL PARA DXF
+========================================================= */
 
-function localProjection(
-    point,
-    origin
-) {
+function localProjection() {
 
-    const R =
-        6378137;
+  const origin =
+    state.points[0];
 
 
-    const lat0 =
-        origin.lat *
-        Math.PI /
-        180;
+  const R =
+    6378137;
 
 
-    const x =
-        (
-            point.lng -
-            origin.lng
-        ) *
-        Math.PI /
-        180 *
-        R *
-        Math.cos(
-            lat0
-        );
+  const cosLat =
+    Math.cos(
+      origin.lat *
+      Math.PI / 180
+    );
 
 
-    const y =
-        (
-            point.lat -
-            origin.lat
-        ) *
-        Math.PI /
-        180 *
-        R;
+  const k =
+    Math.PI / 180 *
+    R;
 
+
+  return function(point) {
 
     return {
+      x:
+        (
+          point.lng -
+          origin.lng
+        ) *
+        k *
+        cosLat,
 
-        x:
-            x,
+      y:
+        (
+          point.lat -
+          origin.lat
+        ) *
+        k,
 
-        y:
-            y
-
+      z:
+        point.z || 0
     };
+
+  };
 
 }
 
 
 /* =========================================================
-   CRIAR DXF
-   ========================================================= */
+   DXF
+========================================================= */
 
 function buildDXF() {
 
-    if (
-        state.contourData.length ===
-        0
-    ) {
+  const project =
+    localProjection();
 
-        throw new Error(
-            "Nenhuma curva disponível para exportar."
-        );
+
+  let dxf =
+`0
+SECTION
+2
+HEADER
+9
+$ACADVER
+1
+AC1015
+0
+ENDSEC
+0
+SECTION
+2
+TABLES
+0
+TABLE
+2
+LAYER
+70
+4
+0
+LAYER
+2
+LIMITE
+70
+0
+62
+3
+6
+CONTINUOUS
+0
+LAYER
+2
+CURVAS
+70
+0
+62
+7
+6
+CONTINUOUS
+0
+LAYER
+2
+CURVAS_MESTRAS
+70
+0
+62
+1
+6
+CONTINUOUS
+0
+LAYER
+2
+PONTOS
+70
+0
+62
+2
+6
+CONTINUOUS
+0
+ENDTAB
+0
+ENDSEC
+0
+SECTION
+2
+ENTITIES
+`;
+
+
+  /* -------------------------------------------------------
+     LIMITE
+  ------------------------------------------------------- */
+
+  for (
+    let i = 0;
+    i < state.points.length;
+    i++
+  ) {
+
+    const j =
+      (
+        i + 1
+      ) %
+      state.points.length;
+
+
+    const a =
+      project(
+        state.points[i]
+      );
+
+
+    const b =
+      project(
+        state.points[j]
+      );
+
+
+    dxf +=
+`
+0
+LINE
+8
+LIMITE
+10
+${a.x}
+20
+${a.y}
+30
+0
+11
+${b.x}
+21
+${b.y}
+31
+0
+`;
+
+  }
+
+
+  /* -------------------------------------------------------
+     CURVAS
+  ------------------------------------------------------- */
+
+  state.contourData.forEach(
+    contour => {
+
+      const layer =
+        contour.major
+          ? "CURVAS_MESTRAS"
+          : "CURVAS";
+
+
+      const a =
+        project({
+          lat:
+            contour.points[0][0],
+
+          lng:
+            contour.points[0][1],
+
+          z:
+            contour.elevation
+        });
+
+
+      const b =
+        project({
+          lat:
+            contour.points[1][0],
+
+          lng:
+            contour.points[1][1],
+
+          z:
+            contour.elevation
+        });
+
+
+      dxf +=
+`
+0
+3DPOLY
+8
+${layer}
+66
+1
+70
+8
+`;
+
+      dxf +=
+`
+0
+VERTEX
+8
+${layer}
+10
+${a.x}
+20
+${a.y}
+30
+${contour.elevation}
+70
+32
+`;
+
+      dxf +=
+`
+0
+VERTEX
+8
+${layer}
+10
+${b.x}
+20
+${b.y}
+30
+${contour.elevation}
+70
+32
+`;
+
+      dxf +=
+`
+0
+SEQEND
+8
+${layer}
+`;
 
     }
+  );
 
 
-    /*
-     * Origem local:
-     * primeiro ponto da área.
-     *
-     * Isso mantém os valores menores no
-     * arquivo e evita problemas de precisão
-     * no CAD.
-     */
+  dxf +=
+`
+0
+ENDSEC
+0
+EOF
+`;
 
-    const origin =
-        state.points[0];
 
-
-    let dxf =
-        "";
-
-
-    dxf +=
-        "0\nSECTION\n2\nHEADER\n";
-
-
-    dxf +=
-        "9\n$ACADVER\n1\nAC1015\n";
-
-
-    dxf +=
-        "0\nENDSEC\n";
-
-
-    dxf +=
-        "0\nSECTION\n2\nTABLES\n";
-
-
-    dxf +=
-        "0\nTABLE\n2\nLAYER\n70\n3\n";
-
-
-    /*
-     * Layer CURVAS
-     */
-
-    dxf +=
-        "0\nLAYER\n2\nCURVAS\n70\n0\n62\n7\n6\nCONTINUOUS\n";
-
-
-    /*
-     * Layer CURVAS_MESTRAS
-     */
-
-    dxf +=
-        "0\nLAYER\n2\nCURVAS_MESTRAS\n70\n0\n62\n1\n6\nCONTINUOUS\n";
-
-
-    /*
-     * Layer LIMITE
-     */
-
-    dxf +=
-        "0\nLAYER\n2\nLIMITE\n70\n0\n62\n3\n6\nCONTINUOUS\n";
-
-
-    dxf +=
-        "0\nENDTAB\n";
-
-
-    dxf +=
-        "0\nENDSEC\n";
-
-
-    dxf +=
-        "0\nSECTION\n2\nENTITIES\n";
-
-
-    /*
-     * CURVAS
-     */
-
-    state.contourData.forEach(
-        segment => {
-
-            const a =
-                localProjection(
-                    segment.a,
-                    origin
-                );
-
-
-            const b =
-                localProjection(
-                    segment.b,
-                    origin
-                );
-
-
-            const major =
-                isMajorContour(
-                    segment.elevation,
-                    getContourInterval()
-                );
-
-
-            const layer =
-                major
-                    ? "CURVAS_MESTRAS"
-                    : "CURVAS";
-
-
-            /*
-             * 3D POLYLINE
-             *
-             * Cada segmento mantém a
-             * altitude real da curva.
-             */
-
-            dxf +=
-                "0\nPOLYLINE\n" +
-                "8\n" +
-                layer +
-                "\n" +
-                "66\n1\n" +
-                "70\n8\n" +
-                "10\n0\n" +
-                "20\n0\n" +
-                "30\n0\n";
-
-
-            dxf +=
-                "0\nVERTEX\n" +
-                "8\n" +
-                layer +
-                "\n" +
-                "10\n" +
-                dxfNumber(
-                    a.x
-                ) +
-                "\n20\n" +
-                dxfNumber(
-                    a.y
-                ) +
-                "\n30\n" +
-                dxfNumber(
-                    segment.elevation
-                ) +
-                "\n";
-
-
-            dxf +=
-                "0\nVERTEX\n" +
-                "8\n" +
-                layer +
-                "\n" +
-                "10\n" +
-                dxfNumber(
-                    b.x
-                ) +
-                "\n20\n" +
-                dxfNumber(
-                    b.y
-                ) +
-                "\n30\n" +
-                dxfNumber(
-                    segment.elevation
-                ) +
-                "\n";
-
-
-            dxf +=
-                "0\nSEQEND\n";
-
-        }
-    );
-
-
-    /*
-     * LIMITE DA ÁREA
-     */
-
-    if (
-        state.points.length >=
-        3
-    ) {
-
-        dxf +=
-            "0\nPOLYLINE\n" +
-            "8\nLIMITE\n" +
-            "66\n1\n" +
-            "70\n9\n" +
-            "10\n0\n" +
-            "20\n0\n" +
-            "30\n0\n";
-
-
-        state.points.forEach(
-            point => {
-
-                const local =
-                    localProjection(
-                        point,
-                        origin
-                    );
-
-
-                dxf +=
-                    "0\nVERTEX\n" +
-                    "8\nLIMITE\n" +
-                    "10\n" +
-                    dxfNumber(
-                        local.x
-                    ) +
-                    "\n20\n" +
-                    dxfNumber(
-                        local.y
-                    ) +
-                    "\n30\n0\n";
-
-            }
-        );
-
-
-        dxf +=
-            "0\nSEQEND\n";
-
-    }
-
-
-    dxf +=
-        "0\nENDSEC\n";
-
-
-    dxf +=
-        "0\nEOF\n";
-
-
-    return dxf;
+  return dxf;
 
 }
 
-
-/* =========================================================
-   EXPORTAR DXF
-   ========================================================= */
 
 function exportDXF() {
 
-    if (
-        state.points.length <
-        3
-    ) {
+  if (
+    state.points.length < 3
+  ) {
 
-        toast(
-            "Delimite uma área primeiro."
-        );
+    toast(
+      "Não há área para exportar."
+    );
 
-        return;
+    return;
 
-    }
-
-
-    if (
-        state.contourData.length ===
-        0
-    ) {
-
-        toast(
-            "Gere as curvas antes de exportar."
-        );
-
-        return;
-
-    }
+  }
 
 
-    try {
+  if (
+    !state.contourData.length
+  ) {
 
-        const dxf =
-            buildDXF();
+    toast(
+      "Gere as curvas antes de exportar o DXF."
+    );
 
+    return;
 
-        downloadBlob(
-            dxf,
-            `MVA_Geo_Contour_${fileDate()}.dxf`,
-            "application/dxf"
-        );
-
-
-        toast(
-            "DXF exportado com sucesso."
-        );
+  }
 
 
-    } catch (
-        error
-    ) {
-
-        console.error(
-            error
-        );
+  const dxf =
+    buildDXF();
 
 
-        toast(
-            error.message
-        );
+  downloadBlob(
+    dxf,
+    `MVA_Contour_${fileDate()}.dxf`,
+    "application/dxf"
+  );
 
-    }
+
+  toast(
+    "DXF exportado."
+  );
 
 }
 
 
 /* =========================================================
-   EXPORTAR CSV DE PONTOS
-   ========================================================= */
+   CSV
+========================================================= */
 
 function exportCSV() {
 
-    if (
-        state.points.length ===
-        0
-    ) {
-
-        toast(
-            "Nenhum ponto foi marcado."
-        );
-
-        return;
-
-    }
-
-
-    let csv =
-        "PONTO;LATITUDE;LONGITUDE\n";
-
-
-    state.points.forEach(
-        (
-            point,
-            index
-        ) => {
-
-            csv +=
-                `${index + 1};` +
-                `${point.lat.toFixed(
-                    8
-                )};` +
-                `${point.lng.toFixed(
-                    8
-                )}\n`;
-
-        }
-    );
-
-
-    downloadBlob(
-        "\uFEFF" +
-        csv,
-        `MVA_Geo_Vertices_${fileDate()}.csv`,
-        "text/csv;charset=utf-8"
-    );
-
+  if (
+    state.points.length < 3
+  ) {
 
     toast(
-        "CSV dos vértices exportado."
+      "Não há área para exportar."
     );
 
-}
+    return;
+
+  }
 
 
-/* =========================================================
-   IMPORTAÇÃO DE KML
-   ========================================================= */
-
-function extractKMLCoordinates(
-    text
-) {
-
-    const parser =
-        new DOMParser();
+  let csv =
+    "Ponto;Latitude;Longitude\n";
 
 
-    const xml =
-        parser.parseFromString(
-            text,
-            "application/xml"
-        );
+  state.points.forEach(
+    (point, index) => {
 
-
-    const coordinateElements =
-        Array.from(
-            xml.getElementsByTagName(
-                "coordinates"
-            )
-        );
-
-
-    if (
-        coordinateElements.length ===
-        0
-    ) {
-
-        throw new Error(
-            "Nenhuma coordenada encontrada no KML."
-        );
+      csv +=
+        `${index + 1};` +
+        `${point.lat.toFixed(8)};` +
+        `${point.lng.toFixed(8)}\n`;
 
     }
+  );
 
 
-    let best = [];
+  downloadBlob(
+    "\uFEFF" + csv,
+    `MVA_Contour_Pontos_${fileDate()}.csv`,
+    "text/csv;charset=utf-8"
+  );
 
 
-    coordinateElements.forEach(
-        element => {
-
-            const raw =
-                element.textContent
-                    .trim();
-
-
-            const list =
-                raw
-                    .split(
-                        /\s+/
-                    )
-                    .map(
-                        value => {
-
-                            const parts =
-                                value.split(
-                                    ","
-                                );
-
-
-                            if (
-                                parts.length <
-                                2
-                            ) {
-
-                                return null;
-
-                            }
-
-
-                            const lng =
-                                Number(
-                                    parts[0]
-                                );
-
-
-                            const lat =
-                                Number(
-                                    parts[1]
-                                );
-
-
-                            if (
-                                !Number.isFinite(
-                                    lat
-                                ) ||
-                                !Number.isFinite(
-                                    lng
-                                )
-                            ) {
-
-                                return null;
-
-                            }
-
-
-                            return {
-                                lat:
-                                    lat,
-                                lng:
-                                    lng
-                            };
-
-                        }
-                    )
-                    .filter(
-                        Boolean
-                    );
-
-
-            if (
-                list.length >
-                best.length
-            ) {
-
-                best =
-                    list;
-
-            }
-
-        }
-    );
-
-
-    if (
-        best.length <
-        3
-    ) {
-
-        throw new Error(
-            "O KML não contém um polígono válido."
-        );
-
-    }
-
-
-    /*
-     * Remove o último ponto caso ele seja
-     * igual ao primeiro.
-     */
-
-    const first =
-        best[0];
-
-
-    const last =
-        best[
-            best.length - 1
-        ];
-
-
-    if (
-        Math.abs(
-            first.lat -
-            last.lat
-        ) <
-        0.00000001 &&
-        Math.abs(
-            first.lng -
-            last.lng
-        ) <
-        0.00000001
-    ) {
-
-        best.pop();
-
-    }
-
-
-    return best;
+  toast(
+    "CSV exportado."
+  );
 
 }
 
 
 /* =========================================================
    IMPORTAR KML
-   ========================================================= */
+========================================================= */
 
-function importKMLFile(
-    file
-) {
+function parseKMLCoordinates(text) {
 
-    const reader =
-        new FileReader();
-
-
-    reader.onload =
-        event => {
-
-            try {
-
-                const points =
-                    extractKMLCoordinates(
-                        event.target.result
-                    );
+  const matches =
+    [
+      ...text.matchAll(
+        /<coordinates[^>]*>([\s\S]*?)<\/coordinates>/gi
+      )
+    ];
 
 
-                clearContours();
+  if (!matches.length) {
 
-
-                removeMarkers();
-
-
-                if (
-                    state.polygon
-                ) {
-
-                    state.map.removeLayer(
-                        state.polygon
-                    );
-
-                }
-
-
-                state.points =
-                    points.map(
-                        point =>
-                            L.latLng(
-                                point.lat,
-                                point.lng
-                            )
-                    );
-
-
-                state.drawing =
-                    false;
-
-
-                state.closed =
-                    true;
-
-
-                renderMarkers();
-
-
-                const bounds =
-                    L.latLngBounds(
-                        state.points
-                    );
-
-
-                state.map.fitBounds(
-                    bounds,
-                    {
-                        padding:
-                            [
-                                40,
-                                40
-                            ]
-                    }
-                );
-
-
-                status(
-                    `KML importado com ${state.points.length} vértices.`
-                );
-
-
-                toast(
-                    "Área importada com sucesso."
-                );
-
-
-            } catch (
-                error
-            ) {
-
-                console.error(
-                    error
-                );
-
-
-                toast(
-                    error.message ||
-                    "Não foi possível importar o KML."
-                );
-
-            }
-
-        };
-
-
-    reader.readAsText(
-        file
+    throw new Error(
+      "Nenhum bloco de coordenadas encontrado no KML."
     );
 
-}
+  }
 
 
-/* =========================================================
-   INPUT DE KML
-   ========================================================= */
-
-if (
-    $("kmlInput")
-) {
-
-    $("kmlInput")
-        .addEventListener(
-            "change",
-            event => {
-
-                const file =
-                    event.target.files[0];
+  let largest = "";
 
 
-                if (
-                    file
-                ) {
+  matches.forEach(
+    match => {
 
-                    importKMLFile(
-                        file
-                    );
+      if (
+        match[1].length >
+        largest.length
+      ) {
 
-                }
+        largest = match[1];
 
-
-                event.target.value =
-                    "";
-
-            }
-        );
-
-}
-
-
-/* =========================================================
-   BOTÃO IMPORTAR KML
-   ========================================================= */
-
-if (
-    $("importKmlBtn")
-) {
-
-    $("importKmlBtn")
-        .addEventListener(
-            "click",
-            () => {
-
-                if (
-                    $("kmlInput")
-                ) {
-
-                    $("kmlInput")
-                        .click();
-
-                }
-
-            }
-        );
-
-}
-
-
-/* =========================================================
-   BOTÃO EXPORTAR KML
-   ========================================================= */
-
-if (
-    $("exportKmlBtn")
-) {
-
-    $("exportKmlBtn")
-        .addEventListener(
-            "click",
-            exportKML
-        );
-
-}
-
-
-/* =========================================================
-   BOTÃO EXPORTAR DXF
-   ========================================================= */
-
-if (
-    $("exportDxfBtn")
-) {
-
-    $("exportDxfBtn")
-        .addEventListener(
-            "click",
-            exportDXF
-        );
-
-}
-
-
-/* =========================================================
-   BOTÃO EXPORTAR CSV
-   ========================================================= */
-
-if (
-    $("exportCsvBtn")
-) {
-
-    $("exportCsvBtn")
-        .addEventListener(
-            "click",
-            exportCSV
-        );
-
-}
-
-
-/* =========================================================
-   ATUALIZAR INFORMAÇÕES DO CURSOR
-   ========================================================= */
-
-state.map.on(
-    "mousemove",
-    event => {
-
-        if (
-            $("cursorLat")
-        ) {
-
-            $("cursorLat")
-                .textContent =
-                event.latlng.lat.toFixed(
-                    6
-                );
-
-        }
-
-
-        if (
-            $("cursorLng")
-        ) {
-
-            $("cursorLng")
-                .textContent =
-                event.latlng.lng.toFixed(
-                    6
-                );
-
-        }
+      }
 
     }
-);
+  );
 
 
-/* =========================================================
-   BOTÃO SATÉLITE
-   ========================================================= */
+  const points =
+    largest
+      .trim()
+      .split(/\s+/)
+      .map(
+        item => {
 
-if (
-    $("satelliteBtn")
-) {
-
-    $("satelliteBtn")
-        .addEventListener(
-            "click",
-            () => {
-
-                if (
-                    !state.map.hasLayer(
-                        satellite
-                    )
-                ) {
-
-                    state.map.addLayer(
-                        satellite
-                    );
-
-                }
-
-            }
-        );
-
-}
+          const values =
+            item.split(",");
 
 
-/* =========================================================
-   BOTÃO MAPA
-   ========================================================= */
+          return {
+            lng:
+              Number(values[0]),
 
-if (
-    $("streetBtn")
-) {
-
-    $("streetBtn")
-        .addEventListener(
-            "click",
-            () => {
-
-                if (
-                    !state.map.hasLayer(
-                        streets
-                    )
-                ) {
-
-                    state.map.addLayer(
-                        streets
-                    );
-
-                }
-
-            }
-        );
-
-}
-
-
-/* =========================================================
-   INSERIR VÉRTICE NO POLÍGONO
-   ========================================================= */
-
-function insertVertexAtClosestEdge(
-    latlng
-) {
-
-    if (
-        state.points.length <
-        2
-    ) {
-
-        addPoint({
-            latlng:
-                latlng
-        });
-
-        return;
-
-    }
-
-
-    let bestIndex =
-        0;
-
-    let bestDistance =
-        Infinity;
-
-
-    for (
-        let i = 0;
-        i <
-        state.points.length;
-        i++
-    ) {
-
-        const a =
-            state.points[i];
-
-
-        const b =
-            state.points[
-                (
-                    i + 1
-                ) %
-                state.points.length
-            ];
-
-
-        const distance =
-            distancePointToSegment(
-                latlng,
-                a,
-                b
-            );
-
-
-        if (
-            distance <
-            bestDistance
-        ) {
-
-            bestDistance =
-                distance;
-
-            bestIndex =
-                i + 1;
+            lat:
+              Number(values[1])
+          };
 
         }
+      )
+      .filter(
+        p =>
+          Number.isFinite(p.lat) &&
+          Number.isFinite(p.lng)
+      );
 
-    }
+
+  if (
+    points.length >= 2 &&
+    distanceMeters(
+      points[0],
+      points[points.length - 1]
+    ) < 2
+  ) {
+
+    points.pop();
+
+  }
 
 
-    saveUndo();
+  return points;
+
+}
 
 
-    state.points.splice(
-        bestIndex,
-        0,
-        latlng
+async function importKMLFile(file) {
+
+  const text =
+    await file.text();
+
+
+  const points =
+    parseKMLCoordinates(
+      text
     );
 
 
-    renderMarkers();
+  if (
+    points.length < 3
+  ) {
 
-
-    toast(
-        "Vértice inserido."
+    throw new Error(
+      "O KML não possui uma área com pelo menos 3 pontos."
     );
 
-}
+  }
 
 
-/* =========================================================
-   DISTÂNCIA PONTO / SEGMENTO
-   ========================================================= */
-
-function distancePointToSegment(
-    p,
-    a,
-    b
-) {
-
-    const meanLat =
-        (
-            p.lat +
-            a.lat +
-            b.lat
-        ) /
-        3;
+  clearAll();
 
 
-    const scaleX =
-        Math.cos(
-            meanLat *
-            Math.PI /
-            180
-        );
+  state.points =
+    points;
 
 
-    const px =
-        p.lng *
-        scaleX;
+  state.closed = true;
+
+  state.drawing = false;
 
 
-    const py =
-        p.lat;
+  renderMarkers();
+
+  redrawPolygon();
+
+  updateStats();
 
 
-    const ax =
-        a.lng *
-        scaleX;
-
-
-    const ay =
-        a.lat;
-
-
-    const bx =
-        b.lng *
-        scaleX;
-
-
-    const by =
-        b.lat;
-
-
-    const dx =
-        bx - ax;
-
-
-    const dy =
-        by - ay;
-
-
-    if (
-        dx === 0 &&
-        dy === 0
-    ) {
-
-        return Math.hypot(
-            px - ax,
-            py - ay
-        );
-
+  state.map.fitBounds(
+    state.polygon.getBounds(),
+    {
+      padding: [30, 30]
     }
+  );
 
 
-    const t =
-        Math.max(
-            0,
-            Math.min(
-                1,
-                (
-                    (
-                        px -
-                        ax
-                    ) *
-                    dx +
-                    (
-                        py -
-                        ay
-                    ) *
-                    dy
-                ) /
-                (
-                    dx * dx +
-                    dy * dy
-                )
-            )
-        );
+  status(
+    `KML importado com ${points.length} vértices.`
+  );
 
 
-    const x =
-        ax +
-        t *
-        dx;
-
-
-    const y =
-        ay +
-        t *
-        dy;
-
-
-    return Math.hypot(
-        px - x,
-        py - y
-    );
+  toast(
+    "KML importado."
+  );
 
 }
-
-
-/* =========================================================
-   DUPLO CLIQUE PARA INSERIR VÉRTICE
-   ========================================================= */
-
-state.map.on(
-    "dblclick",
-    event => {
-
-        if (
-            state.closed &&
-            state.points.length >=
-            3
-        ) {
-
-            insertVertexAtClosestEdge(
-                event.latlng
-            );
-
-        }
-
-    }
-);
-
-
-/* =========================================================
-   BOTÃO DE EXPORTAÇÃO GENÉRICO
-   ========================================================= */
-
-if (
-    $("exportBtn")
-) {
-
-    $("exportBtn")
-        .addEventListener(
-            "click",
-            () => {
-
-                if (
-                    state.contourData.length >
-                    0
-                ) {
-
-                    exportKML();
-
-                } else {
-
-                    toast(
-                        "Gere as curvas antes de exportar."
-                    );
-
-                }
-
-            }
-        );
-
-}
-
-
-/* =========================================================
-   TABELA DE COTAS
-   ========================================================= */
-
-function buildElevationTable() {
-
-    if (
-        !state.contourData.length
-    ) {
-
-        return [];
-
-    }
-
-
-    const values =
-        state.contourData.map(
-            segment =>
-                segment.elevation
-        );
-
-
-    return [
-        ...new Set(
-            values.map(
-                value =>
-                    Number(
-                        value.toFixed(
-                            2
-                        )
-                    )
-            )
-        )
-    ]
-        .sort(
-            (
-                a,
-                b
-            ) =>
-                a - b
-        );
-
-}
-
-
-/* =========================================================
-   MOSTRAR TABELA DE COTAS
-   ========================================================= */
-
-function updateElevationList() {
-
-    const element =
-        $("elevationList");
-
-
-    if (!element) {
-
-        return;
-
-    }
-
-
-    const values =
-        buildElevationTable();
-
-
-    if (
-        values.length ===
-        0
-    ) {
-
-        element.innerHTML =
-            "<span>Nenhuma curva gerada.</span>";
-
-        return;
-
-    }
-
-
-    element.innerHTML =
-        values
-            .map(
-                value =>
-                    `<span class="elevation-chip">${value.toFixed(
-                        2
-                    )} m</span>`
-            )
-            .join("");
-
-}
-
-
-/* =========================================================
-   ATUALIZAÇÃO AUTOMÁTICA DA TABELA
-   ========================================================= */
-
-const originalGenerateContours =
-    generateContours;
-
-
-/*
- * Não substituímos a função.
- * Apenas observamos o resultado através
- * de um intervalo curto.
- */
-
-setInterval(
-    () => {
-
-        if (
-            state.contourData.length >
-            0
-        ) {
-
-            updateElevationList();
-
-        }
-
-    },
-    1000
-);
 
 
 /* =========================================================
    GEOLOCALIZAÇÃO
-   ========================================================= */
+========================================================= */
 
 function locateUser() {
 
-    if (
-        !navigator.geolocation
-    ) {
+  if (
+    !navigator.geolocation
+  ) {
 
-        toast(
-            "Seu navegador não oferece geolocalização."
-        );
+    toast(
+      "Seu navegador não oferece geolocalização."
+    );
 
-        return;
+    return;
 
+  }
+
+
+  loading(
+    true,
+    "Obtendo sua posição..."
+  );
+
+
+  navigator.geolocation.getCurrentPosition(
+
+    position => {
+
+      const lat =
+        position.coords.latitude;
+
+      const lng =
+        position.coords.longitude;
+
+
+      state.map.setView(
+        [lat, lng],
+        17
+      );
+
+
+      L.circleMarker(
+        [lat, lng],
+        {
+          radius: 8,
+          color: "#ffffff",
+          weight: 3,
+          fillColor: "#147a4b",
+          fillOpacity: 1
+        }
+      )
+      .addTo(
+        state.map
+      )
+      .bindPopup(
+        "Sua posição"
+      )
+      .openPopup();
+
+
+      loading(false);
+
+
+      toast(
+        "Posição encontrada."
+      );
+
+    },
+
+    error => {
+
+      loading(false);
+
+
+      let message =
+        "Não foi possível obter sua posição.";
+
+
+      if (
+        error.code ===
+        error.PERMISSION_DENIED
+      ) {
+
+        message =
+          "Permissão de localização negada.";
+
+      }
+
+
+      toast(message);
+
+    },
+
+    {
+      enableHighAccuracy: true,
+      timeout: 15000,
+      maximumAge: 10000
     }
 
-
-    status(
-        "Obtendo sua localização..."
-    );
-
-
-    navigator.geolocation.getCurrentPosition(
-
-        position => {
-
-            const lat =
-                position.coords.latitude;
-
-
-            const lng =
-                position.coords.longitude;
-
-
-            state.map.setView(
-                [
-                    lat,
-                    lng
-                ],
-                17
-            );
-
-
-            L.circleMarker(
-                [
-                    lat,
-                    lng
-                ],
-                {
-
-                    radius:
-                        7,
-
-                    color:
-                        "#ffffff",
-
-                    weight:
-                        2,
-
-                    fillColor:
-                        "#176b45",
-
-                    fillOpacity:
-                        1
-
-                }
-            )
-            .addTo(
-                state.map
-            )
-            .bindPopup(
-                "Sua localização"
-            )
-            .openPopup();
-
-
-            status(
-                "Localização encontrada."
-            );
-
-        },
-
-        error => {
-
-            console.warn(
-                error
-            );
-
-
-            toast(
-                "Não foi possível obter sua localização."
-            );
-
-        },
-
-        {
-
-            enableHighAccuracy:
-                true,
-
-            timeout:
-                10000,
-
-            maximumAge:
-                30000
-
-        }
-
-    );
+  );
 
 }
 
 
 /* =========================================================
-   BOTÃO LOCALIZAR
-   ========================================================= */
+   CONFIGURAÇÕES
+========================================================= */
 
-if (
-    $("locateBtn")
-) {
+function toggleSettings() {
 
-    $("locateBtn")
-        .addEventListener(
-            "click",
-            locateUser
+  const panel =
+    $("settingsPanel");
+
+
+  if (!panel) return;
+
+
+  panel.classList.toggle(
+    "hidden"
+  );
+
+
+  setTimeout(
+    () =>
+      state.map.invalidateSize(),
+    100
+  );
+
+}
+
+
+/* =========================================================
+   CURSOR
+========================================================= */
+
+function updateCursor(latlng) {
+
+  /*
+   * Não cria painel adicional no celular.
+   * Apenas mantém os dados disponíveis no console.
+   */
+
+  state.cursor =
+    latlng;
+
+}
+
+
+/* =========================================================
+   BOTÕES DE SATÉLITE / MAPA
+========================================================= */
+
+function showSatellite() {
+
+  if (
+    !state.map ||
+    !state.baseLayers.satellite
+  ) {
+    return;
+  }
+
+
+  if (
+    state.map.hasLayer(
+      state.baseLayers.streets
+    )
+  ) {
+
+    state.map.removeLayer(
+      state.baseLayers.streets
+    );
+
+  }
+
+
+  state.baseLayers.satellite.addTo(
+    state.map
+  );
+
+}
+
+
+function showStreets() {
+
+  if (
+    !state.map ||
+    !state.baseLayers.streets
+  ) {
+    return;
+  }
+
+
+  if (
+    state.map.hasLayer(
+      state.baseLayers.satellite
+    )
+  ) {
+
+    state.map.removeLayer(
+      state.baseLayers.satellite
+    );
+
+  }
+
+
+  state.baseLayers.streets.addTo(
+    state.map
+  );
+
+}
+
+
+/* =========================================================
+   EVENTOS
+========================================================= */
+
+function setupEvents() {
+
+  $("newArea")?.addEventListener(
+    "click",
+    newArea
+  );
+
+
+  $("undoBtn")?.addEventListener(
+    "click",
+    undo
+  );
+
+
+  $("closeBtn")?.addEventListener(
+    "click",
+    closeArea
+  );
+
+
+  $("generateBtn")?.addEventListener(
+    "click",
+    generateContours
+  );
+
+
+  $("clearBtn")?.addEventListener(
+    "click",
+    clearAll
+  );
+
+
+  $("settingsBtn")?.addEventListener(
+    "click",
+    toggleSettings
+  );
+
+
+  $("locateBtn")?.addEventListener(
+    "click",
+    locateUser
+  );
+
+
+  $("exportKmlBtn")?.addEventListener(
+    "click",
+    exportKML
+  );
+
+
+  $("exportDxfBtn")?.addEventListener(
+    "click",
+    exportDXF
+  );
+
+
+  $("exportCsvBtn")?.addEventListener(
+    "click",
+    exportCSV
+  );
+
+
+  $("importKmlBtn")?.addEventListener(
+    "click",
+    () => {
+
+      $("kmlInput")?.click();
+
+    }
+  );
+
+
+  $("kmlInput")?.addEventListener(
+    "change",
+    async event => {
+
+      const file =
+        event.target.files?.[0];
+
+
+      if (!file) {
+        return;
+      }
+
+
+      try {
+
+        loading(
+          true,
+          "Importando KML..."
         );
 
+
+        await importKMLFile(
+          file
+        );
+
+      } catch (error) {
+
+        console.error(error);
+
+
+        toast(
+          error.message ||
+          "Erro ao importar KML."
+        );
+
+      } finally {
+
+        loading(false);
+
+        event.target.value = "";
+
+      }
+
+    }
+  );
+
+
+  /*
+   * ESC fecha configurações.
+   */
+
+  document.addEventListener(
+    "keydown",
+    event => {
+
+      if (
+        event.key === "Escape"
+      ) {
+
+        $("settingsPanel")
+          ?.classList.add(
+            "hidden"
+          );
+
+      }
+
+
+      /*
+       * CTRL/CMD + Z
+       */
+
+      if (
+        (
+          event.ctrlKey ||
+          event.metaKey
+        ) &&
+        event.key.toLowerCase() === "z"
+      ) {
+
+        event.preventDefault();
+
+        undo();
+
+      }
+
+    }
+  );
+
+
+  /*
+   * Recalcula mapa após redimensionamento.
+   */
+
+  window.addEventListener(
+    "resize",
+    () => {
+
+      setTimeout(
+        () =>
+          state.map?.invalidateSize(),
+        100
+      );
+
+    }
+  );
+
+
+  /*
+   * Atualização da curva quando muda
+   * equidistância depois de já ter gerado.
+   */
+
+  $("interval")?.addEventListener(
+    "change",
+    () => {
+
+      if (
+        state.dem &&
+        state.closed &&
+        !state.processing
+      ) {
+
+        generateContours();
+
+      }
+
+    }
+  );
+
+
+  $("curveMode")?.addEventListener(
+    "change",
+    () => {
+
+      if (
+        state.dem &&
+        state.closed &&
+        !state.processing
+      ) {
+
+        generateContours();
+
+      }
+
+    }
+  );
+
 }
 
 
 /* =========================================================
-   VERIFICAR BIBLIOTECAS
-   ========================================================= */
+   VERIFICAÇÕES
+========================================================= */
 
 function checkLibraries() {
 
-    const missing = [];
+  if (
+    typeof L === "undefined"
+  ) {
 
-
-    if (
-        typeof L ===
-        "undefined"
-    ) {
-
-        missing.push(
-            "Leaflet"
-        );
-
-    }
-
-
-    if (
-        typeof d3 ===
-        "undefined"
-    ) {
-
-        missing.push(
-            "D3 Contours"
-        );
-
-    }
-
-
-    if (
-        missing.length
-    ) {
-
-        console.error(
-            "Bibliotecas ausentes:",
-            missing
-        );
-
-
-        toast(
-            `Bibliotecas não carregadas: ${missing.join(
-                ", "
-            )}`
-        );
-
-
-        return false;
-
-    }
-
-
-    return true;
-
-}
-
-
-/* =========================================================
-   INICIALIZAÇÃO FINAL
-   ========================================================= */
-
-function initializeApplication() {
-
-    if (
-        !checkLibraries()
-    ) {
-
-        return;
-
-    }
-
-
-    state.map.invalidateSize();
-
-
-    updateStats();
-
-
-    status(
-        'Pronto. Toque em "Nova área" para começar.'
+    throw new Error(
+      "Leaflet não foi carregado."
     );
 
+  }
 
-    console.log(
-        "========================================"
+
+  if (
+    typeof d3 === "undefined"
+  ) {
+
+    /*
+     * O código atual usa marching squares
+     * próprio, então D3 não é obrigatório.
+     */
+
+    console.warn(
+      "D3 não foi carregado. O aplicativo continuará usando o cálculo próprio."
     );
 
-
-    console.log(
-        "MVA GEO - CONTOUR MAP"
-    );
-
-
-    console.log(
-        "Aplicação inicializada."
-    );
-
-
-    console.log(
-        "========================================"
-    );
-
-}
-
-
-/* =========================================================
-   START
-   ========================================================= */
-
-if (
-    document.readyState ===
-    "loading"
-) {
-
-    document.addEventListener(
-        "DOMContentLoaded",
-        initializeApplication
-    );
-
-} else {
-
-    initializeApplication();
+  }
 
 }
 
 
 /* =========================================================
    SERVICE WORKER
-   ========================================================= */
+========================================================= */
 
-if (
-    "serviceWorker" in
-    navigator
-) {
+function registerServiceWorker() {
+
+  if (
+    "serviceWorker" in navigator
+  ) {
 
     window.addEventListener(
-        "load",
-        () => {
+      "load",
+      () => {
 
-            navigator.serviceWorker
-                .register(
-                    "./sw.js"
-                )
-                .then(
-                    registration => {
+        navigator.serviceWorker
+          .register(
+            "./sw.js"
+          )
+          .then(
+            registration => {
 
-                        console.log(
-                            "Service Worker ativo:",
-                            registration.scope
-                        );
+              console.log(
+                "MVA Geo Service Worker ativo:",
+                registration.scope
+              );
 
-                    }
-                )
-                .catch(
-                    error => {
+            }
+          )
+          .catch(
+            error => {
 
-                        console.warn(
-                            "Service Worker não registrado:",
-                            error
-                        );
+              console.warn(
+                "Service Worker não registrado:",
+                error
+              );
 
-                    }
-                );
+            }
+          );
 
-        }
+      }
     );
+
+  }
+
+}
+
+
+/* =========================================================
+   INICIALIZAÇÃO
+========================================================= */
+
+function initApp() {
+
+  try {
+
+    checkLibraries();
+
+    initMap();
+
+    setupEvents();
+
+    updateStats();
+
+    registerServiceWorker();
+
+
+    status(
+      'Pronto. Toque em "Nova área" para começar.'
+    );
+
+
+    console.log(
+      "MVA Geo — Contour Map iniciado."
+    );
+
+
+  } catch (error) {
+
+    console.error(
+      error
+    );
+
+
+    status(
+      "Erro ao iniciar o aplicativo."
+    );
+
+
+    toast(
+      error.message ||
+      "Erro ao iniciar."
+    );
+
+  }
+
+}
+
+
+/* =========================================================
+   START
+========================================================= */
+
+if (
+  document.readyState === "loading"
+) {
+
+  document.addEventListener(
+    "DOMContentLoaded",
+    initApp
+  );
+
+} else {
+
+  initApp();
 
 }
