@@ -1,0 +1,1235 @@
+/* =========================================================
+   MVA GEO — CONTOUR MAP
+   style.css
+   Interface responsiva para celular e desktop
+   ========================================================= */
+
+
+/* =========================================================
+   RESET
+   ========================================================= */
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+}
+
+body {
+  font-family:
+    Inter,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    Roboto,
+    Helvetica,
+    Arial,
+    sans-serif;
+
+  background: #eef1f5;
+  color: #172033;
+
+  overflow: hidden;
+
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+
+/* =========================================================
+   BOTÕES / INPUTS
+   ========================================================= */
+
+button,
+input,
+select {
+  font-family: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+
+/* =========================================================
+   CABEÇALHO
+   ========================================================= */
+
+.topbar {
+  position: relative;
+
+  width: 100%;
+  height: 58px;
+
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+
+  padding: 0 14px;
+
+  background: #111827;
+  color: #ffffff;
+
+  border-bottom: 1px solid #263044;
+
+  box-shadow:
+    0 2px 8px rgba(0, 0, 0, 0.25);
+
+  z-index: 2000;
+}
+
+
+/* Marca */
+
+.brand {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+
+  min-width: 0;
+}
+
+.brand-main {
+  font-size: 16px;
+  font-weight: 800;
+
+  letter-spacing: 0.14em;
+
+  white-space: nowrap;
+}
+
+.brand-sub {
+  font-size: 10px;
+  font-weight: 600;
+
+  letter-spacing: 0.12em;
+
+  opacity: 0.68;
+
+  white-space: nowrap;
+}
+
+
+/* Botão configurações */
+
+.icon-button {
+  width: 38px;
+  height: 38px;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 9px;
+
+  background: rgba(255, 255, 255, 0.07);
+
+  color: #ffffff;
+
+  font-size: 18px;
+
+  transition:
+    background 0.15s ease,
+    transform 0.15s ease;
+}
+
+.icon-button:hover {
+  background: rgba(255, 255, 255, 0.13);
+}
+
+.icon-button:active {
+  transform: scale(0.95);
+}
+
+
+/* =========================================================
+   BARRA DE FERRAMENTAS
+   ========================================================= */
+
+.toolbar {
+  position: relative;
+
+  width: 100%;
+  min-height: 52px;
+
+  display: flex;
+  align-items: center;
+
+  gap: 7px;
+
+  padding: 7px 9px;
+
+  background: #ffffff;
+
+  border-bottom: 1px solid #d8dee8;
+
+  overflow-x: auto;
+  overflow-y: hidden;
+
+  -webkit-overflow-scrolling: touch;
+
+  scrollbar-width: none;
+
+  z-index: 1900;
+}
+
+.toolbar::-webkit-scrollbar {
+  display: none;
+}
+
+
+/* =========================================================
+   BOTÕES DA TOOLBAR
+   ========================================================= */
+
+.tool-button {
+  flex: 0 0 auto;
+
+  min-height: 36px;
+
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+
+  gap: 5px;
+
+  padding: 8px 11px;
+
+  border: 1px solid #cfd6e1;
+  border-radius: 8px;
+
+  background: #ffffff;
+
+  color: #243047;
+
+  font-size: 12px;
+  font-weight: 700;
+
+  line-height: 1;
+
+  white-space: nowrap;
+
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    transform 0.1s ease;
+}
+
+.tool-button:hover {
+  background: #f6f8fa;
+}
+
+.tool-button:active {
+  transform: scale(0.97);
+}
+
+
+/* Botão principal */
+
+.tool-button.primary {
+  background: #111827;
+  border-color: #111827;
+
+  color: #ffffff;
+}
+
+.tool-button.primary:hover {
+  background: #1f2937;
+}
+
+
+/* Botão gerar */
+
+.tool-button.accent {
+  background: #176b45;
+  border-color: #176b45;
+
+  color: #ffffff;
+}
+
+.tool-button.accent:hover {
+  background: #125737;
+}
+
+
+/* Botão limpar */
+
+.tool-button.danger {
+  color: #a32929;
+}
+
+.tool-button.danger:hover {
+  background: #fff4f4;
+  border-color: #e5baba;
+}
+
+
+/* =========================================================
+   IMPORTAÇÃO DE ARQUIVOS
+   ========================================================= */
+
+.file-button {
+  position: relative;
+
+  cursor: pointer;
+}
+
+.file-button input {
+  position: absolute;
+
+  width: 1px;
+  height: 1px;
+
+  opacity: 0;
+
+  pointer-events: none;
+}
+
+
+/* =========================================================
+   PAINEL DE CONFIGURAÇÕES
+   ========================================================= */
+
+.settings-panel {
+  position: relative;
+
+  display: none;
+
+  width: 100%;
+
+  grid-template-columns:
+    repeat(
+      4,
+      minmax(150px, 1fr)
+    );
+
+  gap: 10px;
+
+  padding: 11px;
+
+  background: #ffffff;
+
+  border-bottom: 1px solid #d8dee8;
+
+  box-shadow:
+    0 3px 10px rgba(0, 0, 0, 0.06);
+
+  z-index: 1800;
+}
+
+.settings-panel.open {
+  display: grid;
+}
+
+
+/* Item */
+
+.setting-item {
+  min-width: 0;
+}
+
+
+/* Label */
+
+.setting-item label {
+  display: block;
+
+  margin-bottom: 5px;
+
+  color: #596579;
+
+  font-size: 10px;
+  font-weight: 800;
+
+  letter-spacing: 0.03em;
+
+  text-transform: uppercase;
+}
+
+
+/* Select e input */
+
+.setting-item select,
+.setting-item input {
+  width: 100%;
+
+  min-height: 38px;
+
+  padding: 8px 10px;
+
+  border: 1px solid #cfd6e1;
+  border-radius: 7px;
+
+  background: #ffffff;
+
+  color: #172033;
+
+  font-size: 12px;
+
+  outline: none;
+
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.setting-item select:focus,
+.setting-item input:focus {
+  border-color: #176b45;
+
+  box-shadow:
+    0 0 0 3px rgba(23, 107, 69, 0.10);
+}
+
+
+/* Placeholder */
+
+.setting-item input::placeholder {
+  color: #9aa3b2;
+}
+
+
+/* Informações */
+
+.setting-info {
+  grid-column: 1 / -1;
+
+  padding-top: 3px;
+
+  color: #667085;
+
+  font-size: 11px;
+
+  line-height: 1.45;
+}
+
+.setting-info strong {
+  color: #344054;
+
+  font-size: 11px;
+}
+
+.setting-info p {
+  margin-top: 3px;
+}
+
+
+/* =========================================================
+   ÁREA PRINCIPAL
+   ========================================================= */
+
+#main {
+  position: relative;
+
+  width: 100%;
+
+  height:
+    calc(
+      100vh
+      - 58px
+      - 52px
+      - 57px
+    );
+}
+
+
+/* =========================================================
+   MAPA
+   ========================================================= */
+
+#map {
+  position: relative;
+
+  width: 100%;
+  height: 100%;
+
+  background: #dfe5ea;
+}
+
+
+/* =========================================================
+   LEAFLET
+   ========================================================= */
+
+.leaflet-container {
+  width: 100%;
+  height: 100%;
+
+  background: #dfe5ea;
+
+  font-family: inherit;
+}
+
+
+/* Controles */
+
+.leaflet-control {
+  box-shadow:
+    0 2px 8px rgba(0, 0, 0, 0.18) !important;
+}
+
+.leaflet-control-zoom a {
+  width: 34px !important;
+  height: 34px !important;
+
+  line-height: 34px !important;
+
+  font-size: 18px !important;
+}
+
+
+/* Atribuição */
+
+.leaflet-control-attribution {
+  font-size: 9px !important;
+
+  padding: 2px 5px !important;
+}
+
+
+/* =========================================================
+   MARCADORES DOS VÉRTICES
+   ========================================================= */
+
+.vertex {
+  width: 18px;
+  height: 18px;
+
+  border-radius: 50%;
+
+  background: #ffffff;
+
+  border: 3px solid #176b45;
+
+  box-shadow:
+    0 1px 5px rgba(0, 0, 0, 0.55);
+
+  transition:
+    transform 0.1s ease;
+}
+
+.vertex.done {
+  background: #176b45;
+}
+
+.vertex:hover {
+  transform: scale(1.15);
+}
+
+
+/* =========================================================
+   POLÍGONO
+   ========================================================= */
+
+.leaflet-interactive {
+  vector-effect: non-scaling-stroke;
+}
+
+
+/* =========================================================
+   CURVAS DE NÍVEL
+   ========================================================= */
+
+.contour-line {
+  stroke: #344054;
+
+  stroke-width: 1.2;
+
+  stroke-linecap: round;
+  stroke-linejoin: round;
+
+  fill: none;
+
+  vector-effect: non-scaling-stroke;
+}
+
+.contour-line.major {
+  stroke: #111827;
+
+  stroke-width: 2.8;
+
+  stroke-linecap: round;
+  stroke-linejoin: round;
+
+  fill: none;
+}
+
+
+/* Tooltip das curvas */
+
+.leaflet-tooltip {
+  padding: 4px 7px;
+
+  border: 1px solid #d0d5dd;
+
+  border-radius: 5px;
+
+  background: #ffffff;
+
+  color: #172033;
+
+  box-shadow:
+    0 2px 8px rgba(0, 0, 0, 0.15);
+
+  font-size: 11px;
+  font-weight: 700;
+}
+
+
+/* =========================================================
+   PAINEL DE ESTATÍSTICAS
+   ========================================================= */
+
+.stats-panel {
+  position: absolute;
+
+  top: 120px;
+  right: 12px;
+
+  z-index: 1500;
+
+  display: flex;
+
+  gap: 3px;
+
+  padding: 7px;
+
+  background: rgba(255, 255, 255, 0.96);
+
+  border: 1px solid #d7dde7;
+
+  border-radius: 10px;
+
+  box-shadow:
+    0 3px 14px rgba(0, 0, 0, 0.16);
+
+  backdrop-filter: blur(5px);
+}
+
+
+/* Estatística */
+
+.stat {
+  min-width: 74px;
+
+  padding: 2px 6px;
+
+  text-align: center;
+}
+
+.stat strong {
+  display: block;
+
+  color: #172033;
+
+  font-size: 13px;
+  font-weight: 800;
+
+  line-height: 1.25;
+}
+
+.stat span {
+  display: block;
+
+  margin-top: 2px;
+
+  color: #6b7280;
+
+  font-size: 9px;
+
+  line-height: 1.2;
+}
+
+
+/* =========================================================
+   PAINEL INFERIOR
+   ========================================================= */
+
+.bottom-panel {
+  position: fixed;
+
+  left: 0;
+  right: 0;
+  bottom: 0;
+
+  min-height: 57px;
+
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+
+  gap: 12px;
+
+  padding: 7px 12px;
+
+  background: #ffffff;
+
+  border-top: 1px solid #d8dee8;
+
+  z-index: 1700;
+}
+
+
+/* Status */
+
+.status {
+  min-width: 0;
+
+  color: #475467;
+
+  font-size: 12px;
+
+  line-height: 1.3;
+}
+
+
+/* Legenda */
+
+.legend {
+  display: flex;
+  align-items: center;
+
+  gap: 12px;
+
+  color: #667085;
+
+  font-size: 11px;
+
+  white-space: nowrap;
+}
+
+
+/* Item da legenda */
+
+.legend-item {
+  display: inline-flex;
+  align-items: center;
+
+  gap: 4px;
+}
+
+
+/* Linha da legenda */
+
+.legend-line {
+  display: inline-block;
+
+  width: 26px;
+  height: 2px;
+
+  background: #344054;
+
+  border-radius: 2px;
+}
+
+.legend-line.major {
+  height: 4px;
+
+  background: #111827;
+}
+
+
+/* Informação da fonte */
+
+.source-info {
+  color: #667085;
+}
+
+
+/* =========================================================
+   TELA DE CARREGAMENTO
+   ========================================================= */
+
+.loading-overlay {
+  position: fixed;
+
+  inset: 0;
+
+  z-index: 5000;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  background:
+    rgba(17, 24, 39, 0.82);
+
+  backdrop-filter: blur(3px);
+}
+
+.loading-overlay.hidden {
+  display: none;
+}
+
+
+/* Caixa */
+
+.loading-box {
+  width: min(90vw, 360px);
+
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+
+  gap: 9px;
+
+  padding: 25px 22px;
+
+  border: 1px solid rgba(255, 255, 255, 0.12);
+
+  border-radius: 13px;
+
+  background: #111827;
+
+  color: #ffffff;
+
+  text-align: center;
+
+  box-shadow:
+    0 10px 40px rgba(0, 0, 0, 0.35);
+}
+
+.loading-box strong {
+  font-size: 14px;
+}
+
+.loading-box span {
+  color: rgba(255, 255, 255, 0.68);
+
+  font-size: 11px;
+
+  line-height: 1.4;
+}
+
+
+/* Spinner */
+
+.loader {
+  width: 42px;
+  height: 42px;
+
+  border: 4px solid rgba(255, 255, 255, 0.20);
+
+  border-top-color: #ffffff;
+
+  border-radius: 50%;
+
+  animation:
+    mva-spin 0.8s linear infinite;
+}
+
+@keyframes mva-spin {
+
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
+
+}
+
+
+/* =========================================================
+   TOAST / NOTIFICAÇÃO
+   ========================================================= */
+
+.toast {
+  position: fixed;
+
+  left: 50%;
+  bottom: 76px;
+
+  z-index: 6000;
+
+  max-width: calc(100vw - 30px);
+
+  padding: 10px 14px;
+
+  transform:
+    translate(-50%, 12px);
+
+  opacity: 0;
+
+  pointer-events: none;
+
+  border-radius: 8px;
+
+  background: #111827;
+
+  color: #ffffff;
+
+  font-size: 12px;
+  font-weight: 600;
+
+  text-align: center;
+
+  box-shadow:
+    0 5px 18px rgba(0, 0, 0, 0.25);
+
+  transition:
+    opacity 0.2s ease,
+    transform 0.2s ease;
+}
+
+.toast.show {
+  opacity: 1;
+
+  transform:
+    translate(-50%, 0);
+}
+
+
+/* =========================================================
+   CURSOR / DESENHO
+   ========================================================= */
+
+#map.drawing-mode {
+  cursor: crosshair;
+}
+
+
+/* =========================================================
+   SELEÇÃO DE TEXTO
+   ========================================================= */
+
+.no-select {
+  user-select: none;
+
+  -webkit-user-select: none;
+}
+
+
+/* =========================================================
+   DESKTOP
+   ========================================================= */
+
+@media (min-width: 1000px) {
+
+  .toolbar {
+    padding-left: 14px;
+    padding-right: 14px;
+  }
+
+  .tool-button {
+    font-size: 12px;
+  }
+
+  .stats-panel {
+    top: 124px;
+  }
+
+}
+
+
+/* =========================================================
+   TABLET
+   ========================================================= */
+
+@media (max-width: 900px) {
+
+  .settings-panel {
+    grid-template-columns:
+      repeat(
+        2,
+        minmax(160px, 1fr)
+      );
+  }
+
+}
+
+
+/* =========================================================
+   CELULAR
+   ========================================================= */
+
+@media (max-width: 760px) {
+
+  .topbar {
+    height: 56px;
+
+    padding:
+      0 10px;
+  }
+
+  .brand-main {
+    font-size: 14px;
+  }
+
+  .brand-sub {
+    font-size: 9px;
+  }
+
+
+  /* Toolbar */
+
+  .toolbar {
+    min-height: 50px;
+
+    padding:
+      6px 7px;
+
+    gap: 5px;
+  }
+
+  .tool-button {
+    min-height: 35px;
+
+    padding:
+      8px 9px;
+
+    font-size: 11px;
+  }
+
+
+  /* Configurações */
+
+  .settings-panel {
+    grid-template-columns:
+      1fr 1fr;
+
+    gap: 8px;
+
+    padding: 9px;
+  }
+
+  .setting-item select,
+  .setting-item input {
+    min-height: 36px;
+
+    font-size: 11px;
+  }
+
+
+  /* Mapa */
+
+  #main {
+    height:
+      calc(
+        100vh
+        - 56px
+        - 50px
+        - 74px
+      );
+  }
+
+
+  /* Estatísticas */
+
+  .stats-panel {
+    top: auto;
+
+    left: 7px;
+    right: 7px;
+    bottom: 82px;
+
+    justify-content:
+      space-around;
+
+    padding: 6px;
+  }
+
+  .stat {
+    min-width: 0;
+
+    flex: 1;
+
+    padding:
+      2px 4px;
+  }
+
+  .stat strong {
+    font-size: 12px;
+  }
+
+  .stat span {
+    font-size: 8px;
+  }
+
+
+  /* Rodapé */
+
+  .bottom-panel {
+    min-height: 74px;
+
+    display: block;
+
+    padding:
+      7px 9px;
+  }
+
+  .status {
+    font-size: 11px;
+
+    min-height: 27px;
+  }
+
+  .legend {
+    width: 100%;
+
+    margin-top: 4px;
+
+    justify-content:
+      space-between;
+
+    gap: 5px;
+
+    font-size: 9px;
+  }
+
+  .legend-line {
+    width: 20px;
+  }
+
+  .source-info {
+    font-size: 9px;
+  }
+
+
+  /* Toast */
+
+  .toast {
+    bottom: 88px;
+
+    font-size: 11px;
+  }
+
+
+  /* Leaflet */
+
+  .leaflet-control-zoom {
+    margin-top: 5px !important;
+  }
+
+  .leaflet-control-zoom a {
+    width: 32px !important;
+    height: 32px !important;
+
+    line-height: 32px !important;
+  }
+
+}
+
+
+/* =========================================================
+   CELULARES MUITO PEQUENOS
+   ========================================================= */
+
+@media (max-width: 420px) {
+
+  .brand-sub {
+    display: none;
+  }
+
+  .settings-panel {
+    grid-template-columns: 1fr;
+  }
+
+  .setting-info {
+    grid-column: 1;
+  }
+
+  .tool-button {
+    padding:
+      8px 8px;
+
+    font-size: 10px;
+  }
+
+  .stats-panel {
+    bottom: 83px;
+  }
+
+}
+
+
+/* =========================================================
+   MODO PAISAGEM NO CELULAR
+   ========================================================= */
+
+@media (
+  max-width: 900px
+) and (
+  orientation: landscape
+) {
+
+  .topbar {
+    height: 48px;
+  }
+
+  .toolbar {
+    min-height: 45px;
+  }
+
+  #main {
+    height:
+      calc(
+        100vh
+        - 48px
+        - 45px
+        - 55px
+      );
+  }
+
+  .bottom-panel {
+    min-height: 55px;
+  }
+
+  .stats-panel {
+    top: 100px;
+
+    bottom: auto;
+
+    right: 8px;
+    left: auto;
+  }
+
+}
+
+
+/* =========================================================
+   ACESSIBILIDADE
+   ========================================================= */
+
+@media (prefers-reduced-motion: reduce) {
+
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+
+}
+
+
+/* =========================================================
+   DARK MODE DO SISTEMA
+   Mantemos a interface principal clara para facilitar
+   leitura cartográfica.
+   ========================================================= */
+
+@media (prefers-color-scheme: dark) {
+
+  .settings-panel,
+  .toolbar,
+  .bottom-panel {
+    color-scheme: light;
+  }
+
+}
