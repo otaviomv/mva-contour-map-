@@ -1,464 +1,263 @@
-<!DOCTYPE html>
-<html lang="pt-BR">
-<head>
-  <meta charset="UTF-8">
-
-  <meta
-    name="viewport"
-    content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover"
-  >
-
-  <meta
-    name="theme-color"
-    content="#101827"
-  >
-
-  <meta
-    name="description"
-    content="MVA Geo — Contour Map para geração de curvas de nível"
-  >
-
-  <title>MVA Geo — Contour Map</title>
-
-  <link rel="manifest" href="./manifest.json">
-
-  <!-- Leaflet -->
-  <link
-    rel="stylesheet"
-    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-  >
-
-  <!-- Estilo principal -->
-  <link rel="stylesheet" href="./style.css">
-</head>
-
-<body>
-
-  <div id="app">
-
-    <!-- =====================================================
-         CABEÇALHO
-         ===================================================== -->
-
-    <header class="topbar">
-
-      <div class="brand">
-        <div class="brand-main">MVA GEO</div>
-        <div class="brand-sub">CONTOUR MAP</div>
-      </div>
-
-      <button
-        id="settingsBtn"
-        class="icon-btn"
-        type="button"
-        aria-label="Configurações"
-        title="Configurações"
-      >
-        ⚙️
-      </button>
-
-    </header>
-
-
-    <!-- =====================================================
-         BARRA DE FERRAMENTAS
-         ===================================================== -->
-
-    <section class="toolbar">
-
-      <button
-        id="newArea"
-        class="tool-btn primary"
-        type="button"
-      >
-        ＋ Nova área
-      </button>
-
-      <button
-        id="undoBtn"
-        class="tool-btn"
-        type="button"
-      >
-        ↶ Desfazer
-      </button>
-
-      <button
-        id="closeBtn"
-        class="tool-btn"
-        type="button"
-      >
-        ✓ Fechar
-      </button>
-
-      <button
-        id="generateBtn"
-        class="tool-btn generate"
-        type="button"
-      >
-        ⛰️ Gerar curvas
-      </button>
-
-      <button
-        id="clearBtn"
-        class="tool-btn danger"
-        type="button"
-      >
-        Limpar
-      </button>
-
-      <button
-        id="locateBtn"
-        class="tool-btn"
-        type="button"
-      >
-        📍 Minha posição
-      </button>
-
-    </section>
-
-
-    <!-- =====================================================
-         CONFIGURAÇÕES
-         ===================================================== -->
-
-    <section
-      id="settingsPanel"
-      class="settings-panel hidden"
-    >
-
-      <div class="settings-title">
-        Configurações
-      </div>
-
-      <div class="settings-grid">
-
-        <label class="setting">
-          <span>Equidistância</span>
-
-          <select id="interval">
-
-            <option value="0.5">
-              0,50 m
-            </option>
-
-            <option value="1">
-              1,00 m
-            </option>
-
-            <option value="2">
-              2,00 m
-            </option>
-
-            <option value="5">
-              5,00 m
-            </option>
-
-            <option value="10">
-              10,00 m
-            </option>
-
-          </select>
-        </label>
-
-
-        <label class="setting">
-          <span>Amostragem</span>
-
-          <select id="resolution">
-
-            <option value="45">
-              45 m
-            </option>
-
-            <option value="60" selected>
-              60 m
-            </option>
-
-            <option value="90">
-              90 m
-            </option>
-
-          </select>
-        </label>
-
-
-        <label class="setting">
-          <span>Curvas</span>
-
-          <select id="curveMode">
-
-            <option value="all" selected>
-              Todas
-            </option>
-
-            <option value="major">
-              Principais
-            </option>
-
-          </select>
-        </label>
-
-      </div>
-
-      <div class="settings-info">
-
-        <strong>Fonte de elevação</strong>
-
-        <span>
-          Copernicus DEM / Open-Meteo
-        </span>
-
-      </div>
-
-    </section>
-
-
-    <!-- =====================================================
-         MAPA
-         ===================================================== -->
-
-    <main id="map"></main>
-
-
-    <!-- =====================================================
-         PAINEL DE CARREGAMENTO
-         ===================================================== -->
-
-    <div
-      id="loading"
-      class="loading hidden"
-    >
-
-      <div class="loading-card">
-
-        <div class="spinner"></div>
-
-        <div id="loadingText">
-          Processando...
-        </div>
-
-      </div>
-
-    </div>
-
-
-    <!-- =====================================================
-         ESTATÍSTICAS
-         ===================================================== -->
-
-    <section class="stats">
-
-      <div class="stat">
-
-        <strong id="vertexCount">
-          0
-        </strong>
-
-        <span>
-          vértices
-        </span>
-
-      </div>
-
-
-      <div class="stat">
-
-        <strong id="areaValue">
-          0,00 ha
-        </strong>
-
-        <span>
-          área
-        </span>
-
-      </div>
-
-
-      <div class="stat">
-
-        <strong id="minElevation">
-          —
-        </strong>
-
-        <span>
-          cota mínima
-        </span>
-
-      </div>
-
-
-      <div class="stat">
-
-        <strong id="maxElevation">
-          —
-        </strong>
-
-        <span>
-          cota máxima
-        </span>
-
-      </div>
-
-    </section>
-
-
-    <!-- =====================================================
-         STATUS
-         ===================================================== -->
-
-    <section class="status-panel">
-
-      <div id="status">
-        Pronto. Toque em "Nova área" para começar.
-      </div>
-
-      <div class="legend">
-
-        <div class="legend-item">
-
-          <span class="legend-line normal"></span>
-
-          <span>
-            Curva
-          </span>
-
-        </div>
-
-
-        <div class="legend-item">
-
-          <span class="legend-line major"></span>
-
-          <span>
-            Curva principal
-          </span>
-
-        </div>
-
-
-        <div class="dem-status">
-
-          DEM:
-          <strong id="demSource">
-            —
-          </strong>
-
-        </div>
-
-      </div>
-
-    </section>
-
-
-    <!-- =====================================================
-         PAINEL DE ELEVAÇÕES
-         ===================================================== -->
-
-    <section
-      id="elevationPanel"
-      class="elevation-panel"
-    >
-
-      <div class="elevation-title">
-        Pontos de elevação
-      </div>
-
-      <div id="elevationList">
-        —
-      </div>
-
-    </section>
-
-
-    <!-- =====================================================
-         MENU DE EXPORTAÇÃO / IMPORTAÇÃO
-         ===================================================== -->
-
-    <section class="export-panel">
-
-      <input
-        id="kmlInput"
-        type="file"
-        accept=".kml,application/vnd.google-earth.kml+xml"
-        hidden
-      >
-
-      <button
-        id="importKmlBtn"
-        class="secondary-btn"
-        type="button"
-      >
-        📂 Importar KML
-      </button>
-
-      <button
-        id="exportKmlBtn"
-        class="secondary-btn"
-        type="button"
-      >
-        ↓ KML
-      </button>
-
-      <button
-        id="exportDxfBtn"
-        class="secondary-btn"
-        type="button"
-      >
-        ↓ DXF
-      </button>
-
-      <button
-        id="exportCsvBtn"
-        class="secondary-btn"
-        type="button"
-      >
-        ↓ CSV
-      </button>
-
-    </section>
-
-
-    <!-- =====================================================
-         RODAPÉ
-         ===================================================== -->
-
-    <footer class="footer">
-
-      <span>
-        MVA Geo
-      </span>
-
-      <span>
-        Contour Map
-      </span>
-
-      <span>
-        DEM Copernicus GLO-90
-      </span>
-
-    </footer>
-
-  </div>
-
-
-  <!-- =====================================================
-       BIBLIOTECAS
-       ===================================================== -->
-
-  <script
-    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
-  ></script>
-
-  <script
-    src="https://cdn.jsdelivr.net/npm/d3-contour@4"
-  ></script>
-
-
-  <!-- =====================================================
-       APLICAÇÃO
-       ===================================================== -->
-
-  <script src="./app.js"></script>
-
-</body>
-</html>
+/* =========================================================
+   MVA GEO — CONTOUR MAP (ESTILO PRINCIPAL)
+   ========================================================= */
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body, html {
+  width: 100%;
+  height: 100%;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  background-color: #101827;
+  color: #f3f4f6;
+}
+
+#app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  width: 100vw;
+  overflow: hidden;
+}
+
+/* Topbar */
+.topbar {
+  background-color: #111827;
+  padding: 10px 16px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid #1f2937;
+  z-index: 1000;
+}
+
+.brand-main {
+  font-weight: 700;
+  font-size: 1rem;
+  color: #38bdf8;
+}
+
+.brand-sub {
+  font-size: 0.75rem;
+  color: #9ca3af;
+}
+
+/* Toolbar */
+.toolbar {
+  background-color: #1f2937;
+  padding: 8px 12px;
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  z-index: 1000;
+}
+
+.tool-btn {
+  background-color: #374151;
+  color: #f3f4f6;
+  border: none;
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.tool-btn.primary {
+  background-color: #0284c7;
+}
+
+.tool-btn.generate {
+  background-color: #16a34a;
+}
+
+.tool-btn.danger {
+  background-color: #dc2626;
+}
+
+/* Configurações */
+.settings-panel {
+  background-color: #1f2937;
+  padding: 12px;
+  border-bottom: 1px solid #374151;
+  z-index: 1000;
+}
+
+.settings-grid {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+
+.setting {
+  display: flex;
+  flex-direction: column;
+  font-size: 0.8rem;
+  color: #9ca3af;
+}
+
+.setting select {
+  margin-top: 4px;
+  padding: 4px;
+  background: #374151;
+  color: #fff;
+  border: 1px solid #4b5563;
+  border-radius: 4px;
+}
+
+.settings-info {
+  margin-top: 8px;
+  font-size: 0.8rem;
+  color: #9ca3af;
+}
+
+/* Mapa (Obrigatório ter altura para o Leaflet funcionar) */
+#map {
+  flex: 1;
+  width: 100%;
+  background-color: #e5e7eb;
+  z-index: 1;
+}
+
+/* Painéis de Estatísticas e Status */
+.stats {
+  background-color: #111827;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  padding: 8px;
+  text-align: center;
+  border-top: 1px solid #1f2937;
+  font-size: 0.8rem;
+}
+
+.stat strong {
+  display: block;
+  font-size: 0.95rem;
+  color: #38bdf8;
+}
+
+.status-panel {
+  background-color: #1f2937;
+  padding: 8px 12px;
+  font-size: 0.8rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-top: 1px solid #374151;
+}
+
+.legend {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.legend-line {
+  width: 16px;
+  height: 2px;
+  display: inline-block;
+}
+
+.legend-line.normal {
+  background-color: #555555;
+}
+
+.legend-line.major {
+  background-color: #111111;
+  height: 3.5px;
+}
+
+/* Painéis de Elevação e Exportação */
+.elevation-panel {
+  background-color: #111827;
+  padding: 8px 12px;
+  max-height: 80px;
+  overflow-y: auto;
+  font-size: 0.8rem;
+  border-top: 1px solid #1f2937;
+}
+
+.export-panel {
+  background-color: #1f2937;
+  padding: 8px;
+  display: flex;
+  gap: 6px;
+  justify-content: center;
+  border-top: 1px solid #374151;
+}
+
+.secondary-btn {
+  background-color: #374151;
+  color: #f3f4f6;
+  border: none;
+  padding: 6px 10px;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+.footer {
+  background-color: #0b0f19;
+  padding: 6px;
+  text-align: center;
+  font-size: 0.7rem;
+  color: #6b7280;
+  display: flex;
+  justify-content: space-around;
+}
+
+/* Loading e Utilitários */
+.loading {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 9999;
+}
+
+.loading-card {
+  background: #1f2937;
+  padding: 20px;
+  border-radius: 8px;
+  text-align: center;
+  color: #fff;
+}
+
+.spinner {
+  border: 3px solid #374151;
+  border-top: 3px solid #38bdf8;
+  border-radius: 50%;
+  width: 30px;
+  height: 30px;
+  animation: spin 1s linear infinite;
+  margin: 0 auto 10px auto;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+.hidden {
+  display: none !important;
+}
+
+.drawing-mode {
+  cursor: crosshair;
+}
