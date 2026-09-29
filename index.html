@@ -1,498 +1,464 @@
 <!DOCTYPE html>
 <html lang="pt-BR">
-
 <head>
   <meta charset="UTF-8">
 
   <meta
     name="viewport"
-    content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
+    content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover"
+  >
+
+  <meta
+    name="theme-color"
+    content="#101827"
   >
 
   <meta
     name="description"
-    content="MVA Geo Contour Map — geração de curvas de nível a partir de modelos digitais de terreno."
+    content="MVA Geo — Contour Map para geração de curvas de nível"
   >
-
-  <meta name="theme-color" content="#111827">
 
   <title>MVA Geo — Contour Map</title>
 
-  <!-- PWA -->
-  <link rel="manifest" href="manifest.json">
+  <link rel="manifest" href="./manifest.json">
 
   <!-- Leaflet -->
   <link
     rel="stylesheet"
     href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-    integrity="sha256-p4NxAoJBhIINfQ3cL1qH7lJmQjJ7JQ7zVxQ5VQ5VQ5V="
-    crossorigin=""
   >
 
   <!-- Estilo principal -->
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="./style.css">
 </head>
 
 <body>
 
-  <!-- =========================================================
-       CABEÇALHO
-       ========================================================= -->
+  <div id="app">
 
-  <header class="topbar">
+    <!-- =====================================================
+         CABEÇALHO
+         ===================================================== -->
 
-    <div class="brand">
+    <header class="topbar">
 
-      <div class="brand-main">
-        MVA GEO
+      <div class="brand">
+        <div class="brand-main">MVA GEO</div>
+        <div class="brand-sub">CONTOUR MAP</div>
       </div>
 
-      <div class="brand-sub">
-        CONTOUR MAP
+      <button
+        id="settingsBtn"
+        class="icon-btn"
+        type="button"
+        aria-label="Configurações"
+        title="Configurações"
+      >
+        ⚙️
+      </button>
+
+    </header>
+
+
+    <!-- =====================================================
+         BARRA DE FERRAMENTAS
+         ===================================================== -->
+
+    <section class="toolbar">
+
+      <button
+        id="newArea"
+        class="tool-btn primary"
+        type="button"
+      >
+        ＋ Nova área
+      </button>
+
+      <button
+        id="undoBtn"
+        class="tool-btn"
+        type="button"
+      >
+        ↶ Desfazer
+      </button>
+
+      <button
+        id="closeBtn"
+        class="tool-btn"
+        type="button"
+      >
+        ✓ Fechar
+      </button>
+
+      <button
+        id="generateBtn"
+        class="tool-btn generate"
+        type="button"
+      >
+        ⛰️ Gerar curvas
+      </button>
+
+      <button
+        id="clearBtn"
+        class="tool-btn danger"
+        type="button"
+      >
+        Limpar
+      </button>
+
+      <button
+        id="locateBtn"
+        class="tool-btn"
+        type="button"
+      >
+        📍 Minha posição
+      </button>
+
+    </section>
+
+
+    <!-- =====================================================
+         CONFIGURAÇÕES
+         ===================================================== -->
+
+    <section
+      id="settingsPanel"
+      class="settings-panel hidden"
+    >
+
+      <div class="settings-title">
+        Configurações
+      </div>
+
+      <div class="settings-grid">
+
+        <label class="setting">
+          <span>Equidistância</span>
+
+          <select id="interval">
+
+            <option value="0.5">
+              0,50 m
+            </option>
+
+            <option value="1">
+              1,00 m
+            </option>
+
+            <option value="2">
+              2,00 m
+            </option>
+
+            <option value="5">
+              5,00 m
+            </option>
+
+            <option value="10">
+              10,00 m
+            </option>
+
+          </select>
+        </label>
+
+
+        <label class="setting">
+          <span>Amostragem</span>
+
+          <select id="resolution">
+
+            <option value="45">
+              45 m
+            </option>
+
+            <option value="60" selected>
+              60 m
+            </option>
+
+            <option value="90">
+              90 m
+            </option>
+
+          </select>
+        </label>
+
+
+        <label class="setting">
+          <span>Curvas</span>
+
+          <select id="curveMode">
+
+            <option value="all" selected>
+              Todas
+            </option>
+
+            <option value="major">
+              Principais
+            </option>
+
+          </select>
+        </label>
+
+      </div>
+
+      <div class="settings-info">
+
+        <strong>Fonte de elevação</strong>
+
+        <span>
+          Copernicus DEM / Open-Meteo
+        </span>
+
+      </div>
+
+    </section>
+
+
+    <!-- =====================================================
+         MAPA
+         ===================================================== -->
+
+    <main id="map"></main>
+
+
+    <!-- =====================================================
+         PAINEL DE CARREGAMENTO
+         ===================================================== -->
+
+    <div
+      id="loading"
+      class="loading hidden"
+    >
+
+      <div class="loading-card">
+
+        <div class="spinner"></div>
+
+        <div id="loadingText">
+          Processando...
+        </div>
+
       </div>
 
     </div>
 
-    <button
-      id="settingsBtn"
-      class="icon-button"
-      type="button"
-      aria-label="Abrir configurações"
-      title="Configurações"
+
+    <!-- =====================================================
+         ESTATÍSTICAS
+         ===================================================== -->
+
+    <section class="stats">
+
+      <div class="stat">
+
+        <strong id="vertexCount">
+          0
+        </strong>
+
+        <span>
+          vértices
+        </span>
+
+      </div>
+
+
+      <div class="stat">
+
+        <strong id="areaValue">
+          0,00 ha
+        </strong>
+
+        <span>
+          área
+        </span>
+
+      </div>
+
+
+      <div class="stat">
+
+        <strong id="minElevation">
+          —
+        </strong>
+
+        <span>
+          cota mínima
+        </span>
+
+      </div>
+
+
+      <div class="stat">
+
+        <strong id="maxElevation">
+          —
+        </strong>
+
+        <span>
+          cota máxima
+        </span>
+
+      </div>
+
+    </section>
+
+
+    <!-- =====================================================
+         STATUS
+         ===================================================== -->
+
+    <section class="status-panel">
+
+      <div id="status">
+        Pronto. Toque em "Nova área" para começar.
+      </div>
+
+      <div class="legend">
+
+        <div class="legend-item">
+
+          <span class="legend-line normal"></span>
+
+          <span>
+            Curva
+          </span>
+
+        </div>
+
+
+        <div class="legend-item">
+
+          <span class="legend-line major"></span>
+
+          <span>
+            Curva principal
+          </span>
+
+        </div>
+
+
+        <div class="dem-status">
+
+          DEM:
+          <strong id="demSource">
+            —
+          </strong>
+
+        </div>
+
+      </div>
+
+    </section>
+
+
+    <!-- =====================================================
+         PAINEL DE ELEVAÇÕES
+         ===================================================== -->
+
+    <section
+      id="elevationPanel"
+      class="elevation-panel"
     >
-      ⚙
-    </button>
 
-  </header>
+      <div class="elevation-title">
+        Pontos de elevação
+      </div>
+
+      <div id="elevationList">
+        —
+      </div>
+
+    </section>
 
 
-  <!-- =========================================================
-       BARRA DE FERRAMENTAS
-       ========================================================= -->
+    <!-- =====================================================
+         MENU DE EXPORTAÇÃO / IMPORTAÇÃO
+         ===================================================== -->
 
-  <section class="toolbar">
-
-    <button
-      id="newArea"
-      class="tool-button primary"
-      type="button"
-    >
-      ＋ Nova área
-    </button>
-
-    <button
-      id="undoBtn"
-      class="tool-button"
-      type="button"
-    >
-      ↶ Desfazer
-    </button>
-
-    <button
-      id="closeBtn"
-      class="tool-button"
-      type="button"
-    >
-      ✓ Fechar
-    </button>
-
-    <button
-      id="generateBtn"
-      class="tool-button accent"
-      type="button"
-    >
-      ⛰ Gerar curvas
-    </button>
-
-    <button
-      id="clearBtn"
-      class="tool-button danger"
-      type="button"
-    >
-      Limpar
-    </button>
-
-    <label
-      class="tool-button file-button"
-      for="kmlInput"
-    >
-      Importar KML
+    <section class="export-panel">
 
       <input
         id="kmlInput"
         type="file"
-        accept=".kml,.xml"
-      >
-    </label>
-
-    <button
-      id="exportKmlBtn"
-      class="tool-button"
-      type="button"
-    >
-      KML
-    </button>
-
-    <button
-      id="exportDxfBtn"
-      class="tool-button"
-      type="button"
-    >
-      DXF
-    </button>
-
-  </section>
-
-
-  <!-- =========================================================
-       CONFIGURAÇÕES
-       ========================================================= -->
-
-  <section
-    id="settings"
-    class="settings-panel"
-  >
-
-    <!-- Fonte DEM -->
-
-    <div class="setting-item">
-
-      <label for="demSource">
-        Fonte do terreno
-      </label>
-
-      <select id="demSource">
-
-        <option value="ANADEM">
-          ANADEM — DTM 30 m
-        </option>
-
-        <option value="COP30">
-          COP30 — 30 m
-        </option>
-
-      </select>
-
-    </div>
-
-
-    <!-- Equidistância -->
-
-    <div class="setting-item">
-
-      <label for="interval">
-        Equidistância das curvas
-      </label>
-
-      <select id="interval">
-
-        <option value="0.5">
-          0,50 m
-        </option>
-
-        <option value="1" selected>
-          1,00 m
-        </option>
-
-        <option value="2">
-          2,00 m
-        </option>
-
-        <option value="5">
-          5,00 m
-        </option>
-
-        <option value="10">
-          10,00 m
-        </option>
-
-      </select>
-
-    </div>
-
-
-    <!-- Curvas principais -->
-
-    <div class="setting-item">
-
-      <label for="majorEvery">
-        Curvas principais
-      </label>
-
-      <select id="majorEvery">
-
-        <option value="0">
-          Desligado
-        </option>
-
-        <option value="5" selected>
-          A cada 5 curvas
-        </option>
-
-        <option value="10">
-          A cada 10 curvas
-        </option>
-
-      </select>
-
-    </div>
-
-
-    <!-- URL do Worker -->
-
-    <div class="setting-item">
-
-      <label for="apiBase">
-        API DEM
-      </label>
-
-      <input
-        id="apiBase"
-        type="url"
-        placeholder="https://seu-worker.workers.dev"
-        autocomplete="off"
-        spellcheck="false"
+        accept=".kml,application/vnd.google-earth.kml+xml"
+        hidden
       >
 
-    </div>
-
-
-    <!-- Informações -->
-
-    <div class="setting-info">
-
-      <strong>
-        Fonte do relevo
-      </strong>
-
-      <p>
-        O Contour Map utiliza um modelo digital de terreno
-        para calcular as curvas de nível.
-      </p>
-
-      <p>
-        A chave da OpenTopography não fica no site público.
-        Ela será mantida no Worker.
-      </p>
-
-    </div>
-
-  </section>
-
-
-  <!-- =========================================================
-       MAPA
-       ========================================================= -->
-
-  <main id="main">
-
-    <div
-      id="map"
-      aria-label="Mapa para delimitação da área"
-    ></div>
-
-  </main>
-
-
-  <!-- =========================================================
-       PAINEL DE ESTATÍSTICAS
-       ========================================================= -->
-
-  <aside class="stats-panel">
-
-    <div class="stat">
-
-      <strong id="vertexCount">
-        0
-      </strong>
-
-      <span>
-        vértices
-      </span>
-
-    </div>
-
-
-    <div class="stat">
-
-      <strong id="areaValue">
-        0,00 ha
-      </strong>
-
-      <span>
-        área
-      </span>
-
-    </div>
-
-
-    <div class="stat">
-
-      <strong id="minZ">
-        —
-      </strong>
-
-      <span>
-        cota mínima
-      </span>
-
-    </div>
-
-
-    <div class="stat">
-
-      <strong id="maxZ">
-        —
-      </strong>
-
-      <span>
-        cota máxima
-      </span>
-
-    </div>
-
-  </aside>
-
-
-  <!-- =========================================================
-       PAINEL INFERIOR
-       ========================================================= -->
-
-  <section class="bottom-panel">
-
-    <div
-      id="status"
-      class="status"
-    >
-      Pronto. Toque em "Nova área" para começar.
-    </div>
-
-
-    <div class="legend">
-
-      <span class="legend-item">
-
-        <i class="legend-line minor"></i>
-
-        Curva
-
-      </span>
-
-
-      <span class="legend-item">
-
-        <i class="legend-line major"></i>
-
-        Curva principal
-
-      </span>
-
-
-      <span
-        id="sourceInfo"
-        class="source-info"
+      <button
+        id="importKmlBtn"
+        class="secondary-btn"
+        type="button"
       >
-        DEM: —
+        📂 Importar KML
+      </button>
+
+      <button
+        id="exportKmlBtn"
+        class="secondary-btn"
+        type="button"
+      >
+        ↓ KML
+      </button>
+
+      <button
+        id="exportDxfBtn"
+        class="secondary-btn"
+        type="button"
+      >
+        ↓ DXF
+      </button>
+
+      <button
+        id="exportCsvBtn"
+        class="secondary-btn"
+        type="button"
+      >
+        ↓ CSV
+      </button>
+
+    </section>
+
+
+    <!-- =====================================================
+         RODAPÉ
+         ===================================================== -->
+
+    <footer class="footer">
+
+      <span>
+        MVA Geo
       </span>
 
-    </div>
-
-  </section>
-
-
-  <!-- =========================================================
-       TELA DE PROCESSAMENTO
-       ========================================================= -->
-
-  <div
-    id="loading"
-    class="loading-overlay hidden"
-  >
-
-    <div class="loading-box">
-
-      <div class="loader"></div>
-
-      <strong id="loadingTitle">
-        Processando terreno...
-      </strong>
-
-      <span id="loadingText">
-        Aguarde.
+      <span>
+        Contour Map
       </span>
 
-    </div>
+      <span>
+        DEM Copernicus GLO-90
+      </span>
+
+    </footer>
 
   </div>
 
 
-  <!-- =========================================================
-       NOTIFICAÇÕES
-       ========================================================= -->
+  <!-- =====================================================
+       BIBLIOTECAS
+       ===================================================== -->
 
-  <div
-    id="toast"
-    class="toast"
-    role="status"
-    aria-live="polite"
-  ></div>
-
-
-  <!-- =========================================================
-       BIBLIOTECAS JAVASCRIPT
-       ========================================================= -->
-
-  <!-- Leaflet -->
   <script
     src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
-    crossorigin=""
   ></script>
 
-
-  <!-- D3 Contours -->
   <script
     src="https://cdn.jsdelivr.net/npm/d3-contour@4"
   ></script>
 
 
-  <!-- GeoTIFF -->
-  <script
-    src="https://cdn.jsdelivr.net/npm/geotiff@2.1.3/dist-browser/geotiff.js"
-  ></script>
+  <!-- =====================================================
+       APLICAÇÃO
+       ===================================================== -->
 
-
-  <!-- Proj4 -->
-  <script
-    src="https://cdn.jsdelivr.net/npm/proj4@2.11.0/dist/proj4.js"
-  ></script>
-
-
-  <!-- Aplicação MVA Geo -->
-  <script src="app.js"></script>
-
-
-  <!-- Service Worker -->
-  <script>
-    if ("serviceWorker" in navigator) {
-
-      window.addEventListener("load", function () {
-
-        navigator.serviceWorker
-          .register("sw.js")
-          .catch(function (error) {
-
-            console.warn(
-              "Service Worker não registrado:",
-              error
-            );
-
-          });
-
-      });
-
-    }
-  </script>
+  <script src="./app.js"></script>
 
 </body>
-
 </html>
